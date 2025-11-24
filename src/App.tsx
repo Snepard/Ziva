@@ -6,16 +6,16 @@ import { Ziva } from "./components/Ziva";
 
 function App() {
   return (
-    // h-screen: 100vh, w-full: 100% width
     <Canvas
       shadows
       camera={{ position: [0, 0, 5], fov: 30 }}
-      className="h-screen w-full bg-[#ececec]" 
+      // h-screen = 100vh, w-full = 100% width, block = display: block
+      className="h-screen w-full bg-[#ececec] block"
     >
       <Suspense fallback={null}>
-        <Environment preset="mjolnir" />
+        <Environment preset="apartment" />
         
-        {/* Position the model slightly lower to center the face */}
+        {/* Center the model */}
         <group position={[0, -1, 0]}>
             <Ziva />
         </group>
