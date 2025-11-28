@@ -166,24 +166,66 @@ export function Ziva({ audioUrl, expression, animation, ...props }: ZivaProps) {
 
   const { actions, names } = useAnimations(clips || [], group)
   const [currentAnimation, setCurrentAnimation] = useState(names[0])
+  const animationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     // If parent provides an animation, use it. Otherwise, default/idle.
     if (animation && names.includes(animation)) {
       setCurrentAnimation(animation)
+      
+      // Clear any existing timeout
+      if (animationTimeoutRef.current) {
+        clearTimeout(animationTimeoutRef.current)
+      }
+      
+      // Set timeout to return to Idle after 30 seconds (unless already Idle)
+      if (animation !== 'Idle') {
+        animationTimeoutRef.current = setTimeout(() => {
+          setCurrentAnimation('Idle')
+        }, 10000)
+      }
+    }
+    
+    return () => {
+      if (animationTimeoutRef.current) {
+        clearTimeout(animationTimeoutRef.current)
+      }
     }
   }, [animation, names])
 
   useEffect(() => {
     if (!currentAnimation || !actions[currentAnimation]) return
     
-    actions[currentAnimation]
+    const action = actions[currentAnimation]
+    action
       .reset()
       .fadeIn(0.5)
       .play()
+    
+    // Listen for animation completion and return to Idle
+    // (This handles animations that complete before 30s timeout)
+    const onFinished = () => {
+      if (currentAnimation !== 'Idle') {
+        setCurrentAnimation('Idle')
+      }
+    }
+    
+    // Set loop mode - Idle and Talking should loop, others play once
+    if (currentAnimation === 'Idle' || currentAnimation === 'Talking') {
+      action.setLoop(2201, Infinity) // LoopRepeat
+    } else {
+      action.setLoop(2200, 1) // LoopOnce
+      action.clampWhenFinished = true
+      // @ts-ignore - mixer property exists at runtime
+      const mixer = action.getMixer()
+      mixer?.addEventListener('finished', onFinished)
+    }
       
     return () => {
-      actions[currentAnimation]?.fadeOut(0.5)
+      action?.fadeOut(0.5)
+      // @ts-ignore
+      const mixer = action?.getMixer()
+      mixer?.removeEventListener('finished', onFinished)
     }
   }, [currentAnimation, actions])
 
