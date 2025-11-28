@@ -124,8 +124,13 @@ type GLTFResult = GLTF & {
   animations: any[]
 }
 
-export function Ziva(props: React.JSX.IntrinsicElements['group']) {
-  const AUDIO_URL = `${import.meta.env.BASE_URL}audio/intro.mp3`
+type ZivaProps = {
+  audioUrl?: string | null;
+  expression?: string; // New prop
+  animation?: string;  // New prop
+} & React.JSX.IntrinsicElements['group']
+
+export function Ziva({ audioUrl, expression, animation, ...props }: ZivaProps) {
   const VISEME_INTENSITY = 1.0 // Reduced slightly for better blending
   const LERP_SPEED = 0.25
   const VISEME_LERP_SPEED = 0.5 // Faster lerp for mouth movement
@@ -163,6 +168,13 @@ export function Ziva(props: React.JSX.IntrinsicElements['group']) {
   const [currentAnimation, setCurrentAnimation] = useState(names[0])
 
   useEffect(() => {
+    // If parent provides an animation, use it. Otherwise, default/idle.
+    if (animation && names.includes(animation)) {
+      setCurrentAnimation(animation)
+    }
+  }, [animation, names])
+
+  useEffect(() => {
     if (!currentAnimation || !actions[currentAnimation]) return
     
     actions[currentAnimation]
@@ -180,24 +192,52 @@ export function Ziva(props: React.JSX.IntrinsicElements['group']) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const lipsyncConnectedRef = useRef(false)
 
-  useEffect(() => {
-    if (!audioRef.current) {
-      const newAudio = new Audio(AUDIO_URL)
-      newAudio.crossOrigin = 'anonymous'
-      newAudio.loop = false
-      audioRef.current = newAudio
+  // useEffect(() => {
+  //   if (!audioRef.current) {
+  //     const newAudio = new Audio(AUDIO_URL)
+  //     newAudio.crossOrigin = 'anonymous'
+  //     newAudio.loop = false
+  //     audioRef.current = newAudio
       
-      newAudio.addEventListener('error', (e) => {
-        console.error('Audio failed to load:', e)
-      })
-    }
+  //     newAudio.addEventListener('error', (e) => {
+  //       console.error('Audio failed to load:', e)
+  //     })
+  //   }
     
-    return () => { 
-      if (audioRef.current) {
-        audioRef.current.pause()
-      }
+  //   return () => { 
+  //     if (audioRef.current) {
+  //       audioRef.current.pause()
+  //     }
+  //   }
+  // }, [lipsync])
+
+  useEffect(() => {
+    if (!audioUrl) return;
+
+    if (!audioRef.current) {
+      audioRef.current = new Audio(audioUrl);
+      audioRef.current.crossOrigin = 'anonymous';
+    } else {
+      // Update source if audioUrl changes
+      audioRef.current.src = audioUrl;
     }
-  }, [lipsync])
+
+    // Connect to lip-sync
+    const handlePlay = async () => {
+        try {
+            if (!lipsyncConnectedRef.current) {
+                 lipsync.connectAudio(audioRef.current as HTMLAudioElement);
+                 lipsyncConnectedRef.current = true;
+            }
+            await audioRef.current?.play();
+        } catch (e) {
+            console.error("Error playing audio", e);
+        }
+    };
+
+    handlePlay();
+
+  }, [audioUrl, lipsync]);
 
   // 4. Blinking
   const [blink, setBlink] = useState(false)
@@ -217,7 +257,7 @@ export function Ziva(props: React.JSX.IntrinsicElements['group']) {
   }, [])
 
   // 5. Controls
-  const { facialExpression } = useControls({
+  const { facialExpression: debugExpression } = useControls({
     animation: {
         value: names[0] || '',
         options: names,
@@ -259,6 +299,9 @@ export function Ziva(props: React.JSX.IntrinsicElements['group']) {
     })
   })
 
+  // Calculate the actual expression to use: Prop > Leva > Default
+  const activeExpression = expression || debugExpression || 'default'
+
   // 6. Frame Loop
   useFrame(() => {
     const head = nodes.Wolf3D_Head
@@ -278,7 +321,7 @@ export function Ziva(props: React.JSX.IntrinsicElements['group']) {
     const currentViseme = lipsync.viseme 
 
     // C. Expressions
-    const expressionValues = isAudioPlaying ? {} : (facialExpressions[facialExpression] || {})
+    const expressionValues = isAudioPlaying ? {} : (facialExpressions[activeExpression] || {})
 
     // D. Morph Targets
     Object.keys(head.morphTargetDictionary || {}).forEach((key) => {
