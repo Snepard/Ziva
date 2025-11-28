@@ -1,7 +1,6 @@
 import { Canvas } from "@react-three/fiber";
-import { Environment, OrbitControls } from "@react-three/drei";
 import { Suspense, useState, useRef } from "react";
-import { Ziva } from "./components/Ziva";
+import { Experience } from "./components/Experience";
 
 function App() {
   const [input, setInput] = useState("");
@@ -16,7 +15,7 @@ function App() {
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
-  // Handle Text Send
+  // ... (Keep your handleSend, startRecording, stopRecording, sendAudio functions exactly as they were) ...
   const handleSend = async (text: string) => {
     if (!text) return;
     setLoading(true);
@@ -29,7 +28,6 @@ function App() {
         body: JSON.stringify({ message: text }),
       });
       const data = await res.json();
-      
       updateAvatarState(data);
     } catch (e) {
       console.error(e);
@@ -39,7 +37,6 @@ function App() {
     }
   };
 
-  // Handle Voice Record
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -65,7 +62,6 @@ function App() {
     setRecording(false);
   };
 
-  // Send Audio to Backend
   const sendAudio = async (audioBlob: Blob) => {
     setLoading(true);
     const formData = new FormData();
@@ -98,17 +94,21 @@ function App() {
     <>
       {/* UI Overlay */}
       <div className="absolute top-0 left-0 z-10 w-full p-4 flex flex-col items-center pointer-events-none">
-        <div className="bg-white/90 p-4 rounded-xl shadow-xl pointer-events-auto w-full max-w-md">
+        <div className="bg-white/90 p-4 rounded-xl shadow-xl pointer-events-auto w-full max-w-md backdrop-blur-sm">
           {/* Chat History */}
-          <div className="h-48 overflow-y-auto mb-4 text-sm space-y-2 border-b pb-2">
-             {chatHistory.map((msg, i) => <div key={i}>{msg}</div>)}
-             {loading && <div className="text-gray-500 italic">Ziva is thinking...</div>}
+          <div className="h-48 overflow-y-auto mb-4 text-sm space-y-2 border-b pb-2 scrollbar-thin">
+             {chatHistory.map((msg, i) => (
+               <div key={i} className={`p-2 rounded ${msg.startsWith("You") ? "bg-blue-50 text-right" : "bg-gray-50"}`}>
+                 {msg}
+               </div>
+             ))}
+             {loading && <div className="text-gray-500 italic text-xs animate-pulse">Ziva is thinking...</div>}
           </div>
 
           {/* Controls */}
           <div className="flex gap-2">
             <input 
-              className="border p-2 rounded flex-1"
+              className="border p-2 rounded flex-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Type or speak..."
@@ -119,7 +119,7 @@ function App() {
             <button 
               onMouseDown={startRecording}
               onMouseUp={stopRecording}
-              className={`px-4 py-2 rounded text-white ${recording ? 'bg-red-500' : 'bg-blue-500'}`}
+              className={`px-4 py-2 rounded text-white transition-colors ${recording ? 'bg-red-500 animate-pulse' : 'bg-blue-500 hover:bg-blue-600'}`}
               disabled={loading}
             >
               {recording ? '🛑' : '🎤'}
@@ -127,7 +127,7 @@ function App() {
 
             <button 
               onClick={() => handleSend(input)}
-              className="bg-green-600 text-white px-4 py-2 rounded"
+              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded transition-colors"
               disabled={loading || recording}
             >
               Send
@@ -139,18 +139,15 @@ function App() {
         </div>
       </div>
 
-      <Canvas shadows camera={{ position: [0, 0, 5], fov: 30 }} className="h-screen w-full block">
+      {/* 3D Scene */}
+      <Canvas shadows camera={{ position: [0, 0, 5], fov: 30 }} className="h-screen w-full block bg-black">
         <Suspense fallback={null}>
-          <Environment preset="apartment" />
-          <group position={[0, -1, 0]}>
-            <Ziva 
-              audioUrl={audioUrl} 
-              expression={expression} 
-              animation={animation} 
-            />
-          </group>
+          <Experience 
+            audioUrl={audioUrl} 
+            expression={expression} 
+            animation={animation} 
+          />
         </Suspense>
-        <OrbitControls />
       </Canvas>
     </>
   );
