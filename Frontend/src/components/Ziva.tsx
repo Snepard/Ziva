@@ -28,20 +28,6 @@ const facialExpressions: { [key: string]: FacialExpressionValues } = {
     mouthPressLeft: 0.61,
     mouthPressRight: 0.41,
   },
-  funnyFace: {
-    jawLeft: 0.63,
-    mouthPucker: 0.53,
-    noseSneerLeft: 1,
-    noseSneerRight: 0.39,
-    mouthLeft: 1,
-    eyeLookUpLeft: 1,
-    eyeLookUpRight: 1,
-    cheekPuff: 0.99,
-    mouthDimpleLeft: 0.41,
-    mouthRollLower: 0.32,
-    mouthSmileLeft: 0.35,
-    mouthSmileRight: 0.35,
-  },
   sad: {
     mouthFrownLeft: 1,
     mouthFrownRight: 1,
@@ -128,9 +114,10 @@ type ZivaProps = {
   audioUrl?: string | null;
   expression?: string; // New prop
   animation?: string;  // New prop
+  animationTrigger?: number; // Trigger to replay animations
 } & React.JSX.IntrinsicElements['group']
 
-export function Ziva({ audioUrl, expression, animation, ...props }: ZivaProps) {
+export function Ziva({ audioUrl, expression, animation, animationTrigger, ...props }: ZivaProps) {
   const VISEME_INTENSITY = 1.0 // Reduced slightly for better blending
   const LERP_SPEED = 0.25
   const VISEME_LERP_SPEED = 0.5 // Faster lerp for mouth movement
@@ -166,7 +153,34 @@ export function Ziva({ audioUrl, expression, animation, ...props }: ZivaProps) {
 
   const { actions, names } = useAnimations(clips || [], group)
   const [currentAnimation, setCurrentAnimation] = useState(names[0])
+  const [currentExpression, setCurrentExpression] = useState('default')
   const animationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const expressionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Handle expression changes with auto-reset to default after 2 seconds
+  useEffect(() => {
+    if (expression && expression !== 'default') {
+      setCurrentExpression(expression)
+      
+      // Clear any existing timeout
+      if (expressionTimeoutRef.current) {
+        clearTimeout(expressionTimeoutRef.current)
+      }
+      
+      // Reset to default after 2 seconds
+      expressionTimeoutRef.current = setTimeout(() => {
+        setCurrentExpression('default')
+      }, 2000)
+    } else if (expression === 'default') {
+      setCurrentExpression('default')
+    }
+    
+    return () => {
+      if (expressionTimeoutRef.current) {
+        clearTimeout(expressionTimeoutRef.current)
+      }
+    }
+  }, [expression])
 
   useEffect(() => {
     // If parent provides an animation, use it. Otherwise, default/idle.
@@ -191,7 +205,7 @@ export function Ziva({ audioUrl, expression, animation, ...props }: ZivaProps) {
         clearTimeout(animationTimeoutRef.current)
       }
     }
-  }, [animation, names])
+  }, [animation, names, animationTrigger]) // Added animationTrigger to dependencies
 
   useEffect(() => {
     if (!currentAnimation || !actions[currentAnimation]) return
@@ -341,8 +355,8 @@ export function Ziva({ audioUrl, expression, animation, ...props }: ZivaProps) {
     })
   })
 
-  // Calculate the actual expression to use: Prop > Leva > Default
-  const activeExpression = expression || debugExpression || 'default'
+  // Calculate the actual expression to use: currentExpression (with timeout) > Leva > Default
+  const activeExpression = currentExpression || debugExpression || 'default'
 
   // 6. Frame Loop
   useFrame(() => {

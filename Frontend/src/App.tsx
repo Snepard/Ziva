@@ -14,6 +14,7 @@ function App() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [expression, setExpression] = useState("default");
   const [animation, setAnimation] = useState("Idle");
+  const [animationTrigger, setAnimationTrigger] = useState(0);
   
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -94,10 +95,18 @@ function App() {
   };
 
   const updateAvatarState = (data: any) => {
+    console.log("Received from backend:", data);
     setChatHistory(prev => [...prev, `Ziva: ${data.text}`]);
     setAudioUrl(data.audio);
-    if(data.facialExpression) setExpression(data.facialExpression);
-    if(data.animation) setAnimation(data.animation);
+    if(data.facialExpression) {
+      console.log("Setting expression to:", data.facialExpression);
+      setExpression(data.facialExpression);
+    }
+    if(data.animation) {
+      console.log("Setting animation to:", data.animation);
+      setAnimation(data.animation);
+      setAnimationTrigger(prev => prev + 1); // Trigger animation replay
+    }
   };
 
   const activeGlass = isTyping || isHover;
@@ -173,7 +182,8 @@ function App() {
           <Experience 
             audioUrl={audioUrl} 
             expression={expression} 
-            animation={animation} 
+            animation={animation}
+            animationTrigger={animationTrigger}
           />
         </Suspense>
       </Canvas>

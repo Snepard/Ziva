@@ -5,9 +5,10 @@ interface ExperienceProps {
     audioUrl: string | null;
     expression: string;
     animation: string;
+    animationTrigger: number;
 }
 
-export const Experience = ({ audioUrl, expression, animation }: ExperienceProps) => {
+export const Experience = ({ audioUrl, expression, animation, animationTrigger }: ExperienceProps) => {
     return (
         <>
             {/* 1. Controls */}
@@ -45,6 +46,7 @@ export const Experience = ({ audioUrl, expression, animation }: ExperienceProps)
                     audioUrl={audioUrl}
                     expression={expression}
                     animation={animation}
+                    animationTrigger={animationTrigger}
                 />
             </group>
         </>
