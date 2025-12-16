@@ -243,7 +243,7 @@ export function Ziva({ audioUrl, expression, animation, animationTrigger, ...pro
   }, [currentAnimation, actions])
 
   // 3. Audio & Lipsync Setup
-  const lipsync = useMemo(() => new Lipsync(), [])
+  const lipsyncRef = useRef<Lipsync>(new Lipsync())
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const lipsyncConnectedRef = useRef(false)
 
@@ -267,32 +267,52 @@ export function Ziva({ audioUrl, expression, animation, animationTrigger, ...pro
   // }, [lipsync])
 
   useEffect(() => {
-    if (!audioUrl) return;
-
-    if (!audioRef.current) {
-      audioRef.current = new Audio(audioUrl);
-      audioRef.current.crossOrigin = 'anonymous';
-    } else {
-      // Update source if audioUrl changes
-      audioRef.current.src = audioUrl;
+    if (!audioUrl) {
+      // Clean up if no audio URL
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current = null;
+      }
+      lipsyncConnectedRef.current = false;
+      return;
     }
 
-    // Connect to lip-sync
-    const handlePlay = async () => {
-        try {
-            if (!lipsyncConnectedRef.current) {
-                 lipsync.connectAudio(audioRef.current as HTMLAudioElement);
-                 lipsyncConnectedRef.current = true;
-            }
-            await audioRef.current?.play();
-        } catch (e) {
-            console.error("Error playing audio", e);
+    // Reset lipsync state for a new audio source
+    lipsyncRef.current = new Lipsync()
+    lipsyncConnectedRef.current = false
+
+    // Create new audio element or update source
+    if (!audioRef.current) {
+      audioRef.current = new Audio();
+      audioRef.current.crossOrigin = 'anonymous';
+    }
+    
+    audioRef.current.src = audioUrl;
+
+    // Wait for audio to be ready, then connect lipsync and play
+    const handleCanPlay = async () => {
+      try {
+        if (audioRef.current && !lipsyncConnectedRef.current) {
+          lipsyncRef.current.connectAudio(audioRef.current)
+          lipsyncConnectedRef.current = true;
+          await audioRef.current.play();
         }
+      } catch (e) {
+        console.error('Error playing audio:', e);
+      }
     };
 
-    handlePlay();
+    audioRef.current.addEventListener('canplay', handleCanPlay, { once: true });
+    audioRef.current.load(); // Explicitly load the audio
 
-  }, [audioUrl, lipsync]);
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.removeEventListener('canplay', handleCanPlay);
+        audioRef.current.pause();
+      }
+      lipsyncConnectedRef.current = false
+    };
+  }, [audioUrl]);
 
   // 4. Blinking
   const [blink, setBlink] = useState(false)
@@ -316,6 +336,7 @@ export function Ziva({ audioUrl, expression, animation, animationTrigger, ...pro
 
   // 6. Frame Loop
   useFrame(() => {
+    const lipsync = lipsyncRef.current
     const head = nodes.Wolf3D_Head
     const teeth = nodes.Wolf3D_Teeth
 
@@ -327,7 +348,7 @@ export function Ziva({ audioUrl, expression, animation, animationTrigger, ...pro
     }
 
     // B. Check if audio is playing
-    const isAudioPlaying = audioRef.current && !audioRef.current.paused
+    const isAudioPlaying = audioRef.current && !audioRef.current.paused && !audioRef.current.ended
     
     // The library returns values like "viseme_aa", "viseme_sil" directly
     const currentViseme = lipsync.viseme 
