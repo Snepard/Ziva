@@ -182,7 +182,6 @@ function App() {
                 onChange={(e) => {
                   const v = e.target.value;
                   setInput(v);
-                  setIsTyping(v.length > 0);
                 }}
                 placeholder="Type a message..."
                 disabled={loading || recording}
