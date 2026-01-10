@@ -170,18 +170,22 @@ async function processWithGemini(userMessage, sessionId = 'default') {
 // Helper: Text to Speech (ElevenLabs)
 async function textToSpeech(text, { voiceId = DEFAULT_VOICE_ID, ttsModel = DEFAULT_TTS_MODEL } = {}) {
     try {
+        // Only allow English text for TTS
+        if (!/^[\x00-\x7F\u00C0-\u024F\u1E00-\u1EFF\s.,!?;:'"()\-]+$/.test(text)) {
+            throw new Error("TTS only supports English text.");
+        }
         console.log(`TTS Request - Voice: ${voiceId}, Model: ${ttsModel}, Text: "${text.substring(0, 50)}..."`);
-        
         if (!ELEVENLABS_API_KEY) {
             throw new Error("ElevenLabs API key is not configured");
         }
-        
         const response = await axios({
             method: 'POST',
             url: `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
             data: { 
                 text,
-                model_id: ttsModel
+                model_id: ttsModel,
+                // Explicitly set language to English if API supports it
+                // language: 'en' // Uncomment if ElevenLabs API supports this field
             },
             headers: {
                 'xi-api-key': ELEVENLABS_API_KEY,
@@ -248,7 +252,13 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
         });
 
         const userText = sttResponse.data.text;
-        console.log("User said:", userText);
+        const detectedLanguage = sttResponse.data.language || 'en';
+        console.log("User said:", userText, "| Detected language:", detectedLanguage);
+
+        // Only allow English for STT
+        if (detectedLanguage !== 'en' && !/^[\x00-\x7F\u00C0-\u024F\u1E00-\u1EFF\s.,!?;:'"()\-]+$/.test(userText)) {
+            return res.status(400).json({ error: "Speech-to-text only supports English. Please speak in English." });
+        }
 
         // B. Process text with Gemini
         const sessionId = (req.body && req.body.sessionId) || 'default';
@@ -257,7 +267,6 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
         // C. Convert response to Audio
         const usedVoiceId = (req.body && req.body.voiceId) || DEFAULT_VOICE_ID;
         const usedTtsModel = (req.body && req.body.ttsModel) || DEFAULT_TTS_MODEL;
-        
         try {
             const audioUrl = await textToSpeech(aiResponse.text, { voiceId: usedVoiceId, ttsModel: usedTtsModel });
             res.json({ 

@@ -267,33 +267,38 @@ export function Ziva({ audioUrl, expression, animation, animationTrigger, ...pro
   // }, [lipsync])
 
   useEffect(() => {
-    if (!audioUrl) {
-      // Clean up if no audio URL
+    // Cleanup function to fully reset audio and lipsync
+    const cleanup = () => {
       if (audioRef.current) {
-        audioRef.current.pause()
+        audioRef.current.pause();
+        audioRef.current.removeAttribute('src');
+        audioRef.current.load();
         audioRef.current = null;
       }
+      if (lipsyncRef.current) {
+        // wawa-lipsync does not have a disconnect, but we can deref
+        lipsyncRef.current = null as any;
+      }
       lipsyncConnectedRef.current = false;
+    };
+
+    if (!audioUrl) {
+      cleanup();
       return;
     }
 
-    // Reset lipsync state for a new audio source
-    lipsyncRef.current = new Lipsync()
-    lipsyncConnectedRef.current = false
-
-    // Create new audio element or update source
-    if (!audioRef.current) {
-      audioRef.current = new Audio();
-      audioRef.current.crossOrigin = 'anonymous';
-    }
-    
+    // Always create new instances for each audioUrl
+    lipsyncRef.current = new Lipsync();
+    lipsyncConnectedRef.current = false;
+    audioRef.current = new Audio();
+    audioRef.current.crossOrigin = 'anonymous';
     audioRef.current.src = audioUrl;
 
     // Wait for audio to be ready, then connect lipsync and play
     const handleCanPlay = async () => {
       try {
-        if (audioRef.current && !lipsyncConnectedRef.current) {
-          lipsyncRef.current.connectAudio(audioRef.current)
+        if (audioRef.current && !lipsyncConnectedRef.current && lipsyncRef.current) {
+          lipsyncRef.current.connectAudio(audioRef.current);
           lipsyncConnectedRef.current = true;
           await audioRef.current.play();
         }
@@ -303,14 +308,13 @@ export function Ziva({ audioUrl, expression, animation, animationTrigger, ...pro
     };
 
     audioRef.current.addEventListener('canplay', handleCanPlay, { once: true });
-    audioRef.current.load(); // Explicitly load the audio
+    audioRef.current.load();
 
     return () => {
       if (audioRef.current) {
         audioRef.current.removeEventListener('canplay', handleCanPlay);
-        audioRef.current.pause();
       }
-      lipsyncConnectedRef.current = false
+      cleanup();
     };
   }, [audioUrl]);
 

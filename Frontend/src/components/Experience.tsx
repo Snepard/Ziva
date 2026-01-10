@@ -41,7 +41,8 @@ export const Experience = ({ audioUrl, expression, animation, animationTrigger }
             <ContactShadows opacity={0.4} scale={10} blur={2.5} far={4} resolution={256} color="#000000" />
 
             {/* 5. The Avatar */}
-            <group position={[0, -1.3, 0]} scale={1.3}>
+            {/* Shift X to the right for equal spacing between chat and right edge. Adjust 0.4 as needed. */}
+            <group position={[0.4, -1.3, 0]} scale={1.3}>
                 <Ziva
                     audioUrl={audioUrl}
                     expression={expression}
