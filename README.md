@@ -84,19 +84,18 @@ You can speak to Ziva naturally, and it will respond with a lifelike human voice
 ```bash
 Ziva/
 │
-├── frontend/                 # React client
+├── Frontend/                 # React client (Vite + TypeScript)
 │   ├── src/
-│   │   ├── components/       # ChatBubble, AudioRecorder, Visualizer
-│   │   ├── api/              # API connectors (LLM + ElevenLabs)
-│   │   └── hooks/            # useAudio, useRecorder
-│   └── public/
+│   │   ├── components/       # Experience.tsx, Ziva.tsx, etc.
+│   │   ├── assets/           # Images, SVGs, etc.
+│   │   └── App.tsx, main.tsx # Main app files
+│   └── public/               # Static assets (models, audio, home.exr)
+│   └── index.html            # App entry point
+│   └── .env                  # Frontend environment variables
 │
-├── backend/                  # Node.js Server
-│   ├── config/               # API Keys configuration
-│   ├── controllers/          # Voice processing & Chat logic
-│   ├── services/             # ElevenLabsService.js
-│   ├── routes/               # API Endpoints
-│   └── server.js             # Entry point
+├── Backend/                  # Node.js Server (Express)
+│   ├── server.js             # Entry point
+│   └── .env                  # Backend environment variables
 │
 └── README.md
 ```
@@ -110,27 +109,35 @@ git clone [https://github.com/Snepard/Ziva.git](https://github.com/Snepard/Ziva.
 cd Ziva
 ```
 
-2️⃣ API Configuration
-You will need an API key from your AI provider (e.g., Google AI Studio).
-Create a .env file in the backend folder:
-```bash
-GEMINI_API_KEY=....
-ELEVENLABS_API_KEY=....
+2️⃣ API & Environment Configuration
+
+**Backend:**
+Create a `.env` file in the `Backend` folder:
+```env
+GEMINI_API_KEY=your_gemini_api_key
+ELEVENLABS_API_KEY=your_elevenlabs_api_key
 ELEVENLABS_VOICE_ID=ecp3DWciuUyW7BYM7II1
 ELEVENLABS_TTS_MODEL=eleven_flash_v2_5
+FRONTEND_URL=http://localhost:5173
+```
+
+**Frontend:**
+Create a `.env` file in the `Frontend` folder:
+```env
+VITE_API_BASE_URL=http://localhost:3000
 ```
 
 3️⃣ Backend Setup
 ```bash
-cd backend
+cd Backend
 npm install
-npm run dev
+node server.js
 ```
 
 4️⃣ Frontend Setup
 Open a new terminal:
 ```bash
-cd frontend
+cd Frontend
 npm install
 npm run dev
 ```
@@ -148,5 +155,13 @@ Ziva is my exploration into Conversational AI and Prompt Engineering. The goal w
 This project is licensed under the MIT License.
 
 
-### Next Steps
-Would you like me to help you set up the **deployable version** of Ziva on Vercel (Frontend) and Ren
+
+---
+
+## 🌐 Deployment Notes
+
+- For production, set `VITE_API_BASE_URL` in the frontend `.env` to your deployed backend URL.
+- Set `FRONTEND_URL` in the backend `.env` to your deployed frontend URL for CORS.
+- You can serve the frontend build from the backend by copying the `Frontend/dist` folder to the backend and using `express.static`.
+
+---
