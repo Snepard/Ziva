@@ -1,5 +1,5 @@
 import { Canvas } from "@react-three/fiber";
-import { Suspense, useState, useRef, useEffect } from "react";
+import { Suspense, useState, useRef } from "react";
 import { Experience } from "./components/Experience";
 
 function App() {
@@ -11,8 +11,8 @@ function App() {
   
   const [input, setInput] = useState("");
   const [chatHistory, setChatHistory] = useState<string[]>([]);
-  const [isTyping, setIsTyping] = useState(false);
-  const [isHover, setIsHover] = useState(false);
+  const [isTyping, setIsTyping] = useState(false); // Used below
+  // Removed unused: isHover, setIsHover
   
   // Ziva State
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
