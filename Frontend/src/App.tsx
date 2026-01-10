@@ -11,7 +11,7 @@ function App() {
   
   const [input, setInput] = useState("");
   const [chatHistory, setChatHistory] = useState<string[]>([]);
-  const [isTyping, setIsTyping] = useState(false); // Used below
+  // Removed unused: isTyping, setIsTyping
   // Removed unused: isHover, setIsHover
   
   // Ziva State
@@ -31,7 +31,7 @@ function App() {
     // Clear input immediately
     const messageToSend = text;
     setInput("");
-    setIsTyping(false);
+    // setIsTyping(false); // removed unused
     
     // Set thinking animation
     setAnimation("Thinking");
