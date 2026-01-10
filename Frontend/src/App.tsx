@@ -51,6 +51,13 @@ function App() {
           sessionId: sessionId
         }),
       });
+      if (res.status === 401) {
+        const err = await res.json();
+        if (err.status === 'detected_unusual_activity') {
+          setChatHistory(prev => [...prev, "Ziva: Unusual activity detected. Please switch your WiFi or network and try again."]);
+          return;
+        }
+      }
       const data = await res.json();
       updateAvatarState(data);
     } catch (e) {
@@ -102,8 +109,14 @@ function App() {
         method: "POST",
         body: formData,
       });
+      if (res.status === 401) {
+        const err = await res.json();
+        if (err.status === 'detected_unusual_activity') {
+          setChatHistory(prev => [...prev, "Ziva: Unusual activity detected. Please switch your WiFi or network and try again."]);
+          return;
+        }
+      }
       const data = await res.json();
-      
       setChatHistory(prev => [...prev, `You (Voice): ${data.userText}`]);
       updateAvatarState(data);
     } catch (e) {
