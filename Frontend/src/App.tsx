@@ -41,7 +41,7 @@ function App() {
     setChatHistory(prev => [...prev, `You: ${messageToSend}`]);
 
     try {
-      const res = await fetch("http://localhost:3000/chat", {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -98,7 +98,7 @@ function App() {
     formData.append('sessionId', sessionId);
 
     try {
-      const res = await fetch("http://localhost:3000/talk", {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/talk`, {
         method: "POST",
         body: formData,
       });
