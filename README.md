@@ -16,9 +16,6 @@
     <a href="https://ai.google.dev/">
       <img alt="Gemini API" src="https://img.shields.io/badge/AI-Gemini%20API-8E75B2?logo=google&logoColor=white"/>
     </a>
-    <a href="https://elevenlabs.io/">
-      <img alt="ElevenLabs" src="https://img.shields.io/badge/Voice-ElevenLabs-000000?logo=audio-technica&logoColor=white"/>
-    </a>
   </p>
 </div>
 
@@ -35,8 +32,8 @@ You can speak to Ziva naturally, and it will respond with a lifelike human voice
 ## ✨ Key Features
 
 ### 🎙️ Voice Interaction (TTS & STT)
-- **Speech-to-Text (STT):** Talk to Ziva directly using your microphone; your voice is instantly transcribed into text.
-- **Text-to-Speech (TTS):** Hear Ziva's responses in high-quality, realistic voices powered by **ElevenLabs**.
+- **Speech-to-Text (STT):** Talk to Ziva directly using your microphone; your voice is instantly transcribed into text using free, local libraries.
+- **Text-to-Speech (TTS):** Hear Ziva's responses in real time using free, local libraries (pyttsx3 for TTS, SpeechRecognition for STT).
 
 ### 🧠 Context-Aware Conversations
 - Remembers previous turns in the conversation.
@@ -63,7 +60,7 @@ You can speak to Ziva naturally, and it will respond with a lifelike human voice
 ### **Backend (Server)**
 - **Runtime:** Node.js + Express.js
 - **AI Brain:** Google Gemini API / OpenAI API
-- **Voice Engine:** **ElevenLabs API** (TTS & STT)
+- **Voice Engine:** pyttsx3 (TTS), SpeechRecognition (STT) via Python
 - **Multimedia:** `multer` (for handling audio file uploads)
 
 ---
@@ -71,10 +68,10 @@ You can speak to Ziva naturally, and it will respond with a lifelike human voice
 ## 🔄 How Ziva Works
 
 1.  **Voice Input:** User speaks into the microphone.
-2.  **Transcription (STT):** Audio is sent to **ElevenLabs** (or Whisper) to convert speech to text.
+2.  **Transcription (STT):** Audio is sent to a local Python service (SpeechRecognition) to convert speech to text.
 3.  **LLM Processing:** The text prompt is forwarded to the **Gemini/OpenAI API**.
 4.  **Response Generation:** The AI generates a text response.
-5.  **Voice Synthesis (TTS):** The text response is sent to **ElevenLabs**, which returns an audio stream of the spoken answer.
+5.  **Voice Synthesis (TTS):** The text response is sent to a local Python service (pyttsx3), which returns an audio stream of the spoken answer.
 6.  **Playback:** The frontend plays the audio while typing out the text on screen.
 
 ---
@@ -115,9 +112,6 @@ cd Ziva
 Create a `.env` file in the `Backend` folder:
 ```env
 GEMINI_API_KEY=your_gemini_api_key
-ELEVENLABS_API_KEY=your_elevenlabs_api_key
-ELEVENLABS_VOICE_ID=ecp3DWciuUyW7BYM7II1
-ELEVENLABS_TTS_MODEL=eleven_flash_v2_5
 FRONTEND_URL=http://localhost:5173
 ```
 
@@ -163,5 +157,6 @@ This project is licensed under the MIT License.
 - For production, set `VITE_API_BASE_URL` in the frontend `.env` to your deployed backend URL.
 - Set `FRONTEND_URL` in the backend `.env` to your deployed frontend URL for CORS.
 - You can serve the frontend build from the backend by copying the `Frontend/dist` folder to the backend and using `express.static`.
+- No paid TTS/STT services required. All voice features run locally using Python libraries (pyttsx3, SpeechRecognition).
 
 ---

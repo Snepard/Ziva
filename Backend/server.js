@@ -1,3 +1,9 @@
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+import fs from 'fs';
+import path from 'path';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -7,6 +13,10 @@ import multer from 'multer';
 import FormData from 'form-data';
 
 dotenv.config();
+
+// Default TTS voice/model (customize as needed)
+const DEFAULT_VOICE_ID = 'en-US-1'; // Example: 'en-US-1' or your preferred default
+const DEFAULT_TTS_MODEL = 'tts-1'; // Example: 'tts-1' or your preferred default
 
 const app = express();
 app.use(cors({
@@ -50,10 +60,7 @@ let model = getModel(activeModelId);
 // Store chat histories per session
 const chatSessions = new Map();
 
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
-// Voice configuration (override via env or per-request)
-const DEFAULT_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "ecp3DWciuUyW7BYM7II1";
-const DEFAULT_TTS_MODEL = process.env.ELEVENLABS_TTS_MODEL || "eleven_flash_v2_5"; // latency-optimized
+// ElevenLabs config removed. Using local TTS/STT.
 
 // VALID ACTIONS (Must match your Ziva.tsx)
 const VALID_EXPRESSIONS = ['default', 'smile', 'sad', 'surprised', 'angry', 'crazy'];
@@ -116,13 +123,11 @@ Match the mood - Talking for most stuff, Happy/Excited when hyped, Idle for chil
 // Helper: Process Chat with Gemini
 async function processWithGemini(userMessage, sessionId = 'default') {
     let lastError;
-    
     // Get or create chat history for this session
     if (!chatSessions.has(sessionId)) {
         chatSessions.set(sessionId, []);
     }
     const history = chatSessions.get(sessionId);
-    
     // Try candidates until one works
     for (const candidate of MODEL_CANDIDATES) {
         try {
@@ -131,83 +136,62 @@ async function processWithGemini(userMessage, sessionId = 'default') {
                 activeModelId = candidate;
                 model = getModel(activeModelId);
             }
-            
             // Build chat history with system instruction + conversation history
             const chatHistory = [
                 { role: "user", parts: [{ text: SYSTEM_INSTRUCTION }] },
                 { role: "model", parts: [{ text: "Got it! I'll keep things natural and conversational." }] },
                 ...history
             ];
-            
             const chat = model.startChat({
                 history: chatHistory,
             });
-            
             const result = await chat.sendMessage(userMessage);
             const response = JSON.parse(result.response.text());
-            
             // Save to history
             history.push(
                 { role: "user", parts: [{ text: userMessage }] },
                 { role: "model", parts: [{ text: response.text }] }
             );
-            
             return response;
-
         } catch (err) {
+            // Check for Gemini API quota exceeded (free tier) and return a friendly message
+            if (
+                (err.status === 429 || err.message?.includes('quota') || err.message?.includes('limit: 0')) &&
+                (err.message?.includes('Too Many Requests') || err.message?.includes('quota') || err.message?.includes('limit: 0'))
+            ) {
+                // Return a fallback response for free tier users (always as plain text for both chat and voice)
+                return {
+                    text: "Sorry, the Gemini API free tier quota has been exceeded for this project. Please try again later or upgrade your API plan.",
+                    facialExpression: "sad",
+                    animation: "Idle",
+                    exhausted: true
+                };
+            }
             console.warn(`Model ${candidate} failed:`, err.message);
             lastError = err;
-            
             // If it's a 404 (Not Found) or 400 (Bad Request), try the next model
             // Otherwise (e.g., Quota exceeded), keep trying or handle gracefully
             if (err.status !== 404 && err.status !== 400) {
-                 // You might want to break here if it's a network error, 
-                 // but for now we continue to see if another model works.
+                // You might want to break here if it's a network error, 
+                // but for now we continue to see if another model works.
             }
         }
     }
-    
     throw new Error(`All Gemini models failed. Last error: ${lastError?.message}`);
 }
 
 // Helper: Text to Speech (ElevenLabs)
 async function textToSpeech(text, { voiceId = DEFAULT_VOICE_ID, ttsModel = DEFAULT_TTS_MODEL } = {}) {
-    try {
-        // Only allow English text for TTS
-        if (!/^[\x00-\x7F\u00C0-\u024F\u1E00-\u1EFF\s.,!?;:'"()\-]+$/.test(text)) {
-            throw new Error("TTS only supports English text.");
-        }
-        console.log(`TTS Request - Voice: ${voiceId}, Model: ${ttsModel}, Text: "${text.substring(0, 50)}..."`);
-        if (!ELEVENLABS_API_KEY) {
-            throw new Error("ElevenLabs API key is not configured");
-        }
-        const response = await axios({
-            method: 'POST',
-            url: `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-            data: { 
-                text,
-                model_id: ttsModel,
-                // Explicitly set language to English if API supports it
-                // language: 'en' // Uncomment if ElevenLabs API supports this field
-            },
-            headers: {
-                'xi-api-key': ELEVENLABS_API_KEY,
-                'Content-Type': 'application/json',
-            },
-            responseType: 'arraybuffer'
-        });
-        const audioBase64 = Buffer.from(response.data).toString('base64');
-        console.log("TTS Success - Audio size:", audioBase64.length);
-        return `data:audio/mpeg;base64,${audioBase64}`;
-    } catch (err) {
-        console.error("ElevenLabs TTS Error Details:", {
-            status: err.response?.status,
-            statusText: err.response?.statusText,
-            data: err.response?.data ? Buffer.from(err.response.data).toString() : null,
-            message: err.message
-        });
-        throw new Error(`Failed to generate speech: ${err.response?.status || err.message}`);
-    }
+    // Use local Python TTS (pyttsx3) with ES module imports
+    const { spawnSync } = await import('child_process');
+    const tempFile = path.join(__dirname, `tts_${Date.now()}.mp3`);
+    const py = spawnSync('python', ['speech.py', 'tts', text, tempFile], { cwd: __dirname });
+    if (py.error) throw new Error('TTS failed: ' + py.error.message);
+    if (!fs.existsSync(tempFile)) throw new Error('TTS audio file not created');
+    const audioBuffer = fs.readFileSync(tempFile);
+    fs.unlinkSync(tempFile);
+    const audioBase64 = audioBuffer.toString('base64');
+    return `data:audio/mp3;base64,${audioBase64}`;
 }
 
 // 1. TEXT CHAT ROUTE
@@ -221,13 +205,18 @@ app.post('/chat', async (req, res) => {
         const usedVoiceId = voiceId || DEFAULT_VOICE_ID;
         const usedTtsModel = ttsModel || DEFAULT_TTS_MODEL;
         
-        try {
-            const audioUrl = await textToSpeech(aiResponse.text, { voiceId: usedVoiceId, ttsModel: usedTtsModel });
-            res.json({ ...aiResponse, audio: audioUrl, voiceId: usedVoiceId, ttsModel: usedTtsModel });
-        } catch (ttsError) {
-            console.error("TTS failed, sending response without audio:", ttsError.message);
-            // Send response without audio if TTS fails
-            res.json({ ...aiResponse, audio: null, voiceId: usedVoiceId, ttsModel: usedTtsModel, ttsError: ttsError.message });
+        if (aiResponse.exhausted) {
+            // If quota exhausted, do not attempt TTS, just return the message
+            res.json({ ...aiResponse, audio: null, voiceId: usedVoiceId, ttsModel: usedTtsModel });
+        } else {
+            try {
+                const audioUrl = await textToSpeech(aiResponse.text, { voiceId: usedVoiceId, ttsModel: usedTtsModel });
+                res.json({ ...aiResponse, audio: audioUrl, voiceId: usedVoiceId, ttsModel: usedTtsModel });
+            } catch (ttsError) {
+                console.error("TTS failed, sending response without audio:", ttsError.message);
+                // Send response without audio if TTS fails
+                res.json({ ...aiResponse, audio: null, voiceId: usedVoiceId, ttsModel: usedTtsModel, ttsError: ttsError.message });
+            }
         }
     } catch (error) {
         console.error("Chat processing error:", error);
@@ -242,53 +231,51 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
 
         console.log("Received audio file size:", req.file.size);
 
-        // A. Send Audio to ElevenLabs Scribe (Speech to Text)
-        const formData = new FormData();
-        formData.append('file', req.file.buffer, { filename: 'audio.wav', contentType: req.file.mimetype });
-        formData.append('model_id', 'scribe_v1');
-
-        const sttResponse = await axios.post('https://api.elevenlabs.io/v1/speech-to-text', formData, {
-            headers: {
-                ...formData.getHeaders(),
-                'xi-api-key': ELEVENLABS_API_KEY
-            }
-        });
-
-        const userText = sttResponse.data.text;
-        const detectedLanguage = sttResponse.data.language || 'en';
+        // A. Use local Python STT (SpeechRecognition) with ES module imports
+        const { spawnSync } = await import('child_process');
+        const tempFile = path.join(__dirname, `stt_${Date.now()}.wav`);
+        fs.writeFileSync(tempFile, req.file.buffer);
+        const py = spawnSync('python', ['speech.py', 'stt', tempFile], { cwd: __dirname });
+        fs.unlinkSync(tempFile);
+        const userText = py.stdout.toString().trim();
+        const detectedLanguage = 'en'; // pyttsx3/SpeechRecognition does not detect language
         console.log("User said:", userText, "| Detected language:", detectedLanguage);
-
-        // Only allow English for STT
-        if (detectedLanguage !== 'en' && !/^[\x00-\x7F\u00C0-\u024F\u1E00-\u1EFF\s.,!?;:'"()\-]+$/.test(userText)) {
-            return res.status(400).json({ error: "Speech-to-text only supports English. Please speak in English." });
-        }
 
         // B. Process text with Gemini
         const sessionId = (req.body && req.body.sessionId) || 'default';
         const aiResponse = await processWithGemini(userText, sessionId);
-
-        // C. Convert response to Audio
         const usedVoiceId = (req.body && req.body.voiceId) || DEFAULT_VOICE_ID;
         const usedTtsModel = (req.body && req.body.ttsModel) || DEFAULT_TTS_MODEL;
-        try {
-            const audioUrl = await textToSpeech(aiResponse.text, { voiceId: usedVoiceId, ttsModel: usedTtsModel });
-            res.json({ 
-                userText, 
-                ...aiResponse,
-                audio: audioUrl,
-                voiceId: usedVoiceId,
-                ttsModel: usedTtsModel
-            });
-        } catch (ttsError) {
-            console.error("TTS failed in voice route, sending response without audio:", ttsError.message);
-            res.json({ 
-                userText, 
+        if (aiResponse.exhausted) {
+            // If quota exhausted, do not attempt TTS, just return the message
+            res.json({
+                userText,
                 ...aiResponse,
                 audio: null,
                 voiceId: usedVoiceId,
-                ttsModel: usedTtsModel,
-                ttsError: ttsError.message
+                ttsModel: usedTtsModel
             });
+        } else {
+            try {
+                const audioUrl = await textToSpeech(aiResponse.text, { voiceId: usedVoiceId, ttsModel: usedTtsModel });
+                res.json({
+                    userText,
+                    ...aiResponse,
+                    audio: audioUrl,
+                    voiceId: usedVoiceId,
+                    ttsModel: usedTtsModel
+                });
+            } catch (ttsError) {
+                console.error("TTS failed in voice route, sending response without audio:", ttsError.message);
+                res.json({
+                    userText,
+                    ...aiResponse,
+                    audio: null,
+                    voiceId: usedVoiceId,
+                    ttsModel: usedTtsModel,
+                    ttsError: ttsError.message
+                });
+            }
         }
 
     } catch (error) {

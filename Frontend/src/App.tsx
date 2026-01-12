@@ -201,16 +201,21 @@ function App() {
                 onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend(input)}
               />
               
-              <button 
-                onMouseDown={startRecording}
-                onMouseUp={stopRecording}
+              <button
+                onClick={() => {
+                  if (recording) {
+                    stopRecording();
+                  } else {
+                    startRecording();
+                  }
+                }}
                 className={`px-4 py-3 rounded-xl transition-all font-medium ${
-                  recording 
-                    ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse shadow-lg shadow-red-500/50' 
+                  recording
+                    ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse shadow-lg shadow-red-500/50'
                     : 'bg-slate-700 hover:bg-slate-600 text-white'
                 }`}
                 disabled={loading}
-                title="Hold to record"
+                title={recording ? "Stop recording" : "Start recording"}
               >
                 {recording ? '⏹' : '🎤'}
               </button>
