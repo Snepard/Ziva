@@ -116,6 +116,12 @@ function App() {
           return;
         }
       }
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Request failed' }));
+        setChatHistory(prev => [...prev, `Ziva: ${err.details || err.error || 'Voice request failed'}`]);
+        return;
+      }
       const data = await res.json();
       setChatHistory(prev => [...prev, `You (Voice): ${data.userText}`]);
       updateAvatarState(data);

@@ -11,8 +11,25 @@ import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import axios from 'axios';
 import multer from 'multer';
 import FormData from 'form-data';
+import ffmpegPath from 'ffmpeg-static';
 
 dotenv.config();
+
+const PYTHON_BIN = process.env.PYTHON_BIN || 'python';
+
+// Warm up TTS/STT models on startup so the first /talk request doesn't hang.
+function warmupSpeechModels() {
+    import('child_process')
+        .then(({ spawn }) => {
+            const child = spawn(PYTHON_BIN, ['speech.py', 'warmup'], {
+                cwd: __dirname,
+                stdio: 'inherit',
+                env: process.env,
+            });
+            child.on('error', (err) => console.warn('[warmup] failed to start:', err.message));
+        })
+        .catch((err) => console.warn('[warmup] failed to import child_process:', err.message));
+}
 
 // Default TTS voice/model (customize as needed)
 const DEFAULT_VOICE_ID = 'en-US-1'; // Example: 'en-US-1' or your preferred default
@@ -24,6 +41,8 @@ app.use(cors({
     credentials: true
 }));
 app.use(express.json());
+
+warmupSpeechModels();
 
 // Configure Multer for audio uploads
 const upload = multer({ storage: multer.memoryStorage() });
@@ -184,14 +203,19 @@ async function processWithGemini(userMessage, sessionId = 'default') {
 async function textToSpeech(text, { voiceId = DEFAULT_VOICE_ID, ttsModel = DEFAULT_TTS_MODEL } = {}) {
     // Use local Python TTS (pyttsx3) with ES module imports
     const { spawnSync } = await import('child_process');
-    const tempFile = path.join(__dirname, `tts_${Date.now()}.mp3`);
-    const py = spawnSync('python', ['speech.py', 'tts', text, tempFile], { cwd: __dirname });
+    // Coqui TTS reliably writes WAV; MP3 often isn't supported.
+    const tempFile = path.join(__dirname, `tts_${Date.now()}.wav`);
+    const py = spawnSync(PYTHON_BIN, ['speech.py', 'tts', text, tempFile], { cwd: __dirname });
     if (py.error) throw new Error('TTS failed: ' + py.error.message);
+    if (py.status !== 0) {
+        const stderr = py.stderr?.toString()?.trim();
+        throw new Error('TTS failed: ' + (stderr || `python exited with code ${py.status}`));
+    }
     if (!fs.existsSync(tempFile)) throw new Error('TTS audio file not created');
     const audioBuffer = fs.readFileSync(tempFile);
     fs.unlinkSync(tempFile);
     const audioBase64 = audioBuffer.toString('base64');
-    return `data:audio/mp3;base64,${audioBase64}`;
+    return `data:audio/wav;base64,${audioBase64}`;
 }
 
 // 1. TEXT CHAT ROUTE
@@ -229,17 +253,59 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No audio file provided" });
 
-        console.log("Received audio file size:", req.file.size);
+        console.log("Received audio file size:", req.file.size, "mimetype:", req.file.mimetype);
 
-        // A. Use local Python STT (SpeechRecognition) with ES module imports
+        // A. Convert browser-recorded audio (often webm/ogg) into WAV mono PCM for Vosk
         const { spawnSync } = await import('child_process');
-        const tempFile = path.join(__dirname, `stt_${Date.now()}.wav`);
-        fs.writeFileSync(tempFile, req.file.buffer);
-        const py = spawnSync('python', ['speech.py', 'stt', tempFile], { cwd: __dirname });
-        fs.unlinkSync(tempFile);
+        if (!ffmpegPath) {
+            return res.status(500).json({ error: 'FFmpeg not available', details: 'ffmpeg-static path is null' });
+        }
+
+        const base = `stt_${Date.now()}`;
+        const inputExt = (req.file.mimetype || '').includes('ogg')
+            ? 'ogg'
+            : (req.file.mimetype || '').includes('webm')
+                ? 'webm'
+                : 'bin';
+
+        const tempInput = path.join(__dirname, `${base}.${inputExt}`);
+        const tempWav = path.join(__dirname, `${base}.wav`);
+        fs.writeFileSync(tempInput, req.file.buffer);
+
+        console.log('[stt] Converting audio to WAV...');
+        const ff = spawnSync(
+            ffmpegPath,
+            ['-hide_banner', '-loglevel', 'error', '-y', '-i', tempInput, '-ac', '1', '-ar', '16000', '-f', 'wav', tempWav],
+            { cwd: __dirname, timeout: 15000, maxBuffer: 10 * 1024 * 1024 }
+        );
+        fs.unlinkSync(tempInput);
+        if (ff.error) throw new Error('Audio convert failed: ' + ff.error.message);
+        if (ff.status !== 0 || !fs.existsSync(tempWav)) {
+            const ffErr = ff.stderr?.toString()?.trim();
+            throw new Error('Audio convert failed: ' + (ffErr || `ffmpeg exited with code ${ff.status}`));
+        }
+
+        console.log('[stt] Running Vosk STT...');
+
+        // B. Use local Python STT (Vosk)
+        const py = spawnSync(PYTHON_BIN, ['speech.py', 'stt', tempWav], { cwd: __dirname, timeout: 60000, maxBuffer: 10 * 1024 * 1024 });
+        fs.unlinkSync(tempWav);
+        if (py.error) throw new Error('STT failed: ' + py.error.message);
+        if (py.status !== 0) {
+            const stderr = py.stderr?.toString()?.trim();
+            throw new Error('STT failed: ' + (stderr || `python exited with code ${py.status}`));
+        }
         const userText = py.stdout.toString().trim();
         const detectedLanguage = 'en'; // pyttsx3/SpeechRecognition does not detect language
         console.log("User said:", userText, "| Detected language:", detectedLanguage);
+
+        // If STT couldn't decode/transcribe, don't call Gemini (prevents misleading quota messages)
+        if (!userText || userText === 'Could not understand audio' || userText.startsWith('STT error:')) {
+            return res.status(400).json({
+                error: 'Speech-to-text failed',
+                details: userText || 'Empty transcript'
+            });
+        }
 
         // B. Process text with Gemini
         const sessionId = (req.body && req.body.sessionId) || 'default';
