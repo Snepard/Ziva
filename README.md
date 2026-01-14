@@ -210,6 +210,13 @@ Frontend runs on `http://localhost:5173`.
 - If you don’t want auto-downloads for speech models, set `VOSK_AUTO_DOWNLOAD=0` and/or `PIPER_AUTO_DOWNLOAD=0`.
 - The first voice request can be slower; the backend runs a warmup on startup.
 
+### Deployment note (Render / Linux)
+
+If you see `ModuleNotFoundError: No module named 'vosk'` (or `piper`), it means the Python deps for `Backend/speech.py` were not installed in your deploy environment.
+
+- Python deps live in `Backend/requirements.txt`
+- `Backend/package.json` runs a `postinstall` hook to install them automatically during `npm install`
+
 ## Configuration (Optional)
 
 Backend (`Backend/.env`):
