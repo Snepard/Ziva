@@ -3,160 +3,230 @@
 
   <p align="center">
     <strong>Intelligent. Responsive. Vocal.</strong><br/>
-    A next-generation AI chatbot capable of natural, context-aware, and voice-enabled conversations.
+    A voice-enabled AI avatar with local speech (Piper/Vosk) + Gemini.
   </p>
 
   <p align="center">
     <a href="https://react.dev/">
-      <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white"/>
+      <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white"/>
+    </a>
+    <a href="https://vite.dev/">
+      <img alt="Vite" src="https://img.shields.io/badge/Vite-rolldown--vite-646CFF?logo=vite&logoColor=white"/>
+    </a>
+    <a href="https://threejs.org/">
+      <img alt="Three.js" src="https://img.shields.io/badge/Three.js-r3f-000000?logo=three.js&logoColor=white"/>
     </a>
     <a href="https://nodejs.org/">
-      <img alt="Node.js" src="https://img.shields.io/badge/Node.js-Express-339933?logo=nodedotjs&logoColor=white"/>
+      <img alt="Node.js" src="https://img.shields.io/badge/Node.js-Express%205-339933?logo=nodedotjs&logoColor=white"/>
     </a>
     <a href="https://ai.google.dev/">
       <img alt="Gemini API" src="https://img.shields.io/badge/AI-Gemini%20API-8E75B2?logo=google&logoColor=white"/>
+    </a>
+    <a href="https://github.com/rhasspy/piper">
+      <img alt="Piper" src="https://img.shields.io/badge/TTS-Piper-2B579A?logo=python&logoColor=white"/>
+    </a>
+    <a href="https://alphacephei.com/vosk/">
+      <img alt="Vosk" src="https://img.shields.io/badge/STT-Vosk-2B579A?logo=python&logoColor=white"/>
     </a>
   </p>
 </div>
 
 ---
 
-## 🤖 Overview
+## Overview
 
-**Ziva** is a sophisticated AI chatbot application designed to bridge the gap between human users and Large Language Models (LLMs). Unlike standard text-based bots, Ziva offers a fully immersive experience with **bi-directional voice interaction**.
+Ziva is a voice-enabled AI chatbot with a 3D avatar. You can type or speak; Ziva responds with text plus a locally synthesized voice, while driving avatar facial expressions + animations.
 
-You can speak to Ziva naturally, and it will respond with a lifelike human voice, maintaining conversation context and emotional nuance.
+At a high level:
 
----
-
-## ✨ Key Features
-
-### 🎙️ Voice Interaction (TTS & STT)
-- **Speech-to-Text (STT):** Talk to Ziva directly using your microphone; your voice is instantly transcribed into text using free, local libraries.
-- **Text-to-Speech (TTS):** Hear Ziva's responses in real time using free, local libraries (pyttsx3 for TTS, SpeechRecognition for STT).
-
-### 🧠 Context-Aware Conversations
-- Remembers previous turns in the conversation.
-- Understands follow-up questions without needing context restated.
-
-### ⚡ Real-Time Streaming
-- Responses are streamed in real-time (typewriter effect) for a fluid UX.
-- Audio playback begins as soon as the text is generated.
-
-### 📝 Rich Text Formatting
-- **Markdown Support:** Renders bold, italics, lists, and headers perfectly.
-- **Code Highlighting:** Automatically detects programming languages and formats code blocks.
+- **Frontend (Vite dev server)** runs on `http://localhost:5173`
+- **Backend (Express API)** runs on `http://localhost:3000`
+- **Python speech worker** is spawned by the backend for local STT/TTS
 
 ---
 
-## 🧩 Tech Stack
+## Key Features
 
-### **Frontend (Client)**
-- **Framework:** React.js (Vite)
-- **Styling:** Tailwind CSS + Framer Motion
-- **Audio:** Web Audio API (for recording)
-- **State Management:** React Hooks / Context API
-
-### **Backend (Server)**
-- **Runtime:** Node.js + Express.js
-- **AI Brain:** Google Gemini API / OpenAI API
-- **Voice Engine:** pyttsx3 (TTS), SpeechRecognition (STT) via Python
-- **Multimedia:** `multer` (for handling audio file uploads)
+- **Text + voice chat:** `POST /chat` for text, `POST /talk` for microphone audio.
+- **Local speech:** Vosk STT + Piper TTS (no paid TTS/STT service required).
+- **3D avatar:** Three.js via @react-three/fiber + @react-three/drei.
+- **Lip sync:** wawa-lipsync.
+- **Session memory:** backend keeps per-session chat history.
 
 ---
 
-## 🔄 How Ziva Works
+## Tech Stack
 
-1.  **Voice Input:** User speaks into the microphone.
-2.  **Transcription (STT):** Audio is sent to a local Python service (SpeechRecognition) to convert speech to text.
-3.  **LLM Processing:** The text prompt is forwarded to the **Gemini/OpenAI API**.
-4.  **Response Generation:** The AI generates a text response.
-5.  **Voice Synthesis (TTS):** The text response is sent to a local Python service (pyttsx3), which returns an audio stream of the spoken answer.
-6.  **Playback:** The frontend plays the audio while typing out the text on screen.
+### Frontend
+
+- React 19 + TypeScript
+- Vite (rolldown-vite)
+- Tailwind CSS
+- Three.js via @react-three/fiber + @react-three/drei
+- Lip sync: wawa-lipsync
+- (Optional) Leva (debug controls)
+
+### Backend
+
+- Node.js (ESM) + Express 5
+- Google Gemini via `@google/generative-ai` (Gemini 2.5 model IDs)
+- `cors`, `dotenv`
+- `multer` for audio upload
+- `ffmpeg-static` to convert browser audio (webm/ogg) → WAV mono PCM 16-bit
+- Spawns Python (`Backend/speech.py`) for TTS/STT
+
+### Speech (Python)
+
+- Vosk (STT)
+- Piper (TTS)
 
 ---
 
-## 📁 Repository Structure
+## How It Works
+
+### Text chat (`/chat`)
+
+1. Frontend sends `{ message, sessionId }` to the backend.
+2. Backend calls Gemini and receives JSON containing `text`, `facialExpression`, `animation`.
+3. Backend generates TTS audio locally with Piper and returns it as a base64 WAV data URL.
+4. Frontend plays audio and applies expression/animation to the 3D avatar.
+
+### Voice chat (`/talk`)
+
+1. Browser records audio (usually `audio/webm`).
+2. Backend converts to WAV mono PCM with FFmpeg.
+3. Python transcribes with Vosk.
+4. Text is sent to Gemini.
+5. Python synthesizes voice with Piper.
+6. Frontend plays audio and animates the 3D avatar.
+
+---
+
+## Repository Structure
 
 ```bash
 Ziva/
-│
 ├── Frontend/                 # React client (Vite + TypeScript)
 │   ├── src/
-│   │   ├── components/       # Experience.tsx, Ziva.tsx, etc.
-│   │   ├── assets/           # Images, SVGs, etc.
-│   │   └── App.tsx, main.tsx # Main app files
-│   └── public/               # Static assets (models, audio, home.exr)
-│   └── index.html            # App entry point
-│   └── .env                  # Frontend environment variables
-│
-├── Backend/                  # Node.js Server (Express)
-│   ├── server.js             # Entry point
-│   └── .env                  # Backend environment variables
-│
+│   │   ├── App.tsx            # Chat UI + recording + API calls
+│   │   └── components/
+│   │       ├── Experience.tsx  # Scene setup
+│   │       └── Ziva.tsx        # Avatar + animations + lipsync
+│   └── public/               # Static assets
+│       ├── home.exr
+│       └── models/            # Ziva.glb, Animations.glb, etc.
+├── Backend/                  # Node.js API
+│   ├── server.js             # Express app + routes
+│   ├── dev.js                # Dev runner (also resolves PYTHON_BIN)
+│   ├── speech.py             # Piper + Vosk
+│   └── models/               # Piper voices + Vosk model
 └── README.md
 ```
+
 ---
 
-## 🚀 Getting Started   
+## Getting Started
 
-1️⃣ Clone the Repository
+### Prereqs
+
+- Node.js 18+ (recommended)
+- Python 3.10+ (recommended)
+
+### 1) Backend
+
+Install Node deps:
+
 ```bash
-git clone [https://github.com/Snepard/Ziva.git](https://github.com/Snepard/Ziva.git)
-cd Ziva
+cd Backend
+npm install
 ```
 
-2️⃣ API & Environment Configuration
+Set env vars (copy the template):
 
-**Backend:**
-Create a `.env` file in the `Backend` folder:
+```bash
+copy .env.example .env
+```
+
+Edit `Backend/.env` and set at least:
+
 ```env
-GEMINI_API_KEY=your_gemini_api_key
 FRONTEND_URL=http://localhost:5173
+GEMINI_API_KEY=your_key_here
 ```
 
-**Frontend:**
-Create a `.env` file in the `Frontend` folder:
+Install Python deps (required for voice):
+
+```bash
+cd ..
+python -m venv .venv
+.venv\Scripts\python -m pip install --upgrade pip
+.venv\Scripts\python -m pip install vosk piper-tts
+```
+
+Run the backend:
+
+```bash
+cd Backend
+npm run dev
+```
+
+Backend runs on `http://localhost:3000`.
+
+### 2) Frontend
+
+```bash
+cd Frontend
+npm install
+```
+
+Create `Frontend/.env`:
+
 ```env
 VITE_API_BASE_URL=http://localhost:3000
 ```
 
-3️⃣ Backend Setup
-```bash
-cd Backend
-npm install
-node server.js
-```
+Run:
 
-4️⃣ Frontend Setup
-Open a new terminal:
 ```bash
-cd Frontend
-npm install
 npm run dev
 ```
-Visit http://localhost:5173 to start chatting with Ziva!
+
+Frontend runs on `http://localhost:5173`.
 
 ---
 
-## 🧠 Author’s Note
+## API (Backend)
 
-Ziva is my exploration into Conversational AI and Prompt Engineering. The goal was to create a UI that feels as polished as proprietary tools like ChatGPT, while maintaining control over the underlying data and model parameters.
-
----
-
-## 🧾 License
-This project is licensed under the MIT License.
-
-
+- `POST /chat` — JSON `{ message, sessionId }` → `{ text, facialExpression, animation, audio }`
+- `POST /talk` — multipart form-data `audio=<blob>` (+ `sessionId`) → `{ userText, text, facialExpression, animation, audio }`
+- `GET /tts/voices` — list available Piper voices
+- `POST /clear-history` — JSON `{ sessionId }`
 
 ---
 
-## 🌐 Deployment Notes
+## Notes / Troubleshooting
 
-- For production, set `VITE_API_BASE_URL` in the frontend `.env` to your deployed backend URL.
-- Set `FRONTEND_URL` in the backend `.env` to your deployed frontend URL for CORS.
-- You can serve the frontend build from the backend by copying the `Frontend/dist` folder to the backend and using `express.static`.
-- No paid TTS/STT services required. All voice features run locally using Python libraries (pyttsx3, SpeechRecognition).
+- If Python isn’t found, set `PYTHON_BIN` in `Backend/.env` to your interpreter path.
+- If you don’t want auto-downloads for speech models, set `VOSK_AUTO_DOWNLOAD=0` and/or `PIPER_AUTO_DOWNLOAD=0`.
+- The first voice request can be slower; the backend runs a warmup on startup.
 
----
+## Configuration (Optional)
+
+Backend (`Backend/.env`):
+
+- `PYTHON_BIN` — path to python executable (useful on Windows)
+- `PIPER_VOICE` — default Piper voice (example: `en_US-amy-low`, `en_GB-semaine-medium`)
+- `PIPER_TTS_STYLE` — `default` or `cheerful` (see `speech.py`)
+- `PIPER_SPEAKER_ID` — speaker index for multi-speaker voices (if supported)
+- `PIPER_MODELS_DIR` — where Piper `.onnx` models live
+- `PIPER_AUTO_DOWNLOAD` — set `0` to disable auto-download of missing voices
+- `VOSK_MODEL_PATH` — path to a Vosk model directory
+- `VOSK_AUTO_DOWNLOAD` — set `0` to disable auto-download of the default Vosk model
+
+Frontend (`Frontend/.env`):
+
+- `VITE_API_BASE_URL` — backend base URL (default: `http://localhost:3000`)
+
+## License
+
+No top-level license file is included currently. Add a `LICENSE` file if you plan to distribute the project.
