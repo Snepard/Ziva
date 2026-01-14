@@ -7,8 +7,89 @@ from pathlib import Path
 from urllib.request import urlretrieve
 
 import vosk
+from piper.config import SynthesisConfig
 from piper.download_voices import download_voice
 from piper.voice import PiperVoice
+
+
+_PIPER_VOICE_CACHE: dict[tuple[str, str], PiperVoice] = {}
+
+
+def _get_env_float(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        raise ValueError(f"Invalid float for {name}: {raw!r}")
+
+
+def _get_env_int(name: str) -> int | None:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"Invalid int for {name}: {raw!r}")
+
+
+def _build_synthesis_config(style: str | None = None, speaker_id: int | None = None) -> SynthesisConfig | None:
+    """Build Piper SynthesisConfig.
+
+    Piper exposes prosody controls through SynthesisConfig:
+    - length_scale: < 1.0 = faster, > 1.0 = slower
+    - noise_scale/noise_w_scale: higher can sound more expressive, too high sounds noisy
+
+    Precedence:
+    1) Explicit style preset (cheerful)
+    2) Env overrides (PIPER_LENGTH_SCALE / PIPER_NOISE_SCALE / PIPER_NOISE_W_SCALE / PIPER_VOLUME)
+    3) None -> use model defaults
+    """
+
+    style = (style or os.getenv("PIPER_TTS_STYLE") or "default").strip().lower()
+
+    # Preset defaults (tuned to be a bit brighter/less robotic without sounding noisy).
+    preset: dict[str, float] = {}
+    if style == "cheerful":
+        preset = {
+            "length_scale": 0.88,
+            "noise_scale": 0.80,
+            "noise_w_scale": 0.90,
+            "volume": 1.05,
+        }
+    elif style in ("default", "", "none"):
+        preset = {}
+    else:
+        # Unknown style -> fall back to defaults
+        preset = {}
+
+    # Env overrides (take precedence over preset)
+    env_speaker_id = _get_env_int("PIPER_SPEAKER_ID")
+    length_scale = _get_env_float("PIPER_LENGTH_SCALE")
+    noise_scale = _get_env_float("PIPER_NOISE_SCALE")
+    noise_w_scale = _get_env_float("PIPER_NOISE_W_SCALE")
+    volume = _get_env_float("PIPER_VOLUME")
+
+    final_speaker_id = speaker_id if speaker_id is not None else env_speaker_id
+
+    # If nothing is set, return None to keep Piper defaults.
+    if (
+        final_speaker_id is None
+        and not preset
+        and all(v is None for v in (length_scale, noise_scale, noise_w_scale, volume))
+    ):
+        return None
+
+    return SynthesisConfig(
+        speaker_id=final_speaker_id,
+        length_scale=length_scale if length_scale is not None else preset.get("length_scale"),
+        noise_scale=noise_scale if noise_scale is not None else preset.get("noise_scale"),
+        noise_w_scale=noise_w_scale if noise_w_scale is not None else preset.get("noise_w_scale"),
+        normalize_audio=True,
+        volume=volume if volume is not None else preset.get("volume", 1.0),
+    )
 
 
 def _ensure_vosk_model() -> str:
@@ -68,9 +149,15 @@ def _ensure_vosk_model() -> str:
     raise FileNotFoundError("Vosk model download/extract did not produce expected directory.")
 
 
-def _ensure_piper_voice() -> tuple[str, str]:
-    """Ensure Piper voice model + config exist, return (onnx_path, json_path)."""
-    voice = os.getenv("PIPER_VOICE", "en_US-amy-low")
+def _ensure_piper_voice(voice_override: str | None = None) -> tuple[str, str]:
+    """Ensure Piper voice model + config exist, return (onnx_path, json_path).
+
+    Voice priority:
+    1) voice_override (when provided)
+    2) PIPER_VOICE env var
+    3) en_US-amy-low
+    """
+    voice = (voice_override or os.getenv("PIPER_VOICE") or "en_US-amy-low").strip()
     models_dir = Path(os.getenv("PIPER_MODELS_DIR", Path(__file__).parent / "models" / "piper"))
     models_dir.mkdir(parents=True, exist_ok=True)
 
@@ -90,15 +177,28 @@ def _ensure_piper_voice() -> tuple[str, str]:
     )
 
 
-def tts(text: str, output_path: str) -> str:
+def tts(
+    text: str,
+    output_path: str,
+    voice: str | None = None,
+    style: str | None = None,
+    speaker_id: int | None = None,
+) -> str:
     """Piper TTS output (realistic, offline, free).
 
     Outputs WAV.
     """
-    onnx_path, json_path = _ensure_piper_voice()
-    voice = PiperVoice.load(onnx_path, config_path=json_path)
+    onnx_path, json_path = _ensure_piper_voice(voice_override=voice)
+
+    cache_key = (onnx_path, json_path)
+    piper_voice = _PIPER_VOICE_CACHE.get(cache_key)
+    if piper_voice is None:
+        piper_voice = PiperVoice.load(onnx_path, config_path=json_path)
+        _PIPER_VOICE_CACHE[cache_key] = piper_voice
+
+    syn_config = _build_synthesis_config(style=style, speaker_id=speaker_id)
     with wave.open(str(output_path), "wb") as wav_file:
-        voice.synthesize_wav(text, wav_file)
+        piper_voice.synthesize_wav(text, wav_file, syn_config=syn_config)
     return str(output_path)
 
 
@@ -133,7 +233,10 @@ if __name__ == "__main__":
     if mode == "tts":
         text = sys.argv[2]
         output_path = sys.argv[3]
-        tts(text, output_path)
+        voice = sys.argv[4] if len(sys.argv) > 4 else None
+        style = sys.argv[5] if len(sys.argv) > 5 else None
+        speaker_id = int(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6] != "" else None
+        tts(text, output_path, voice=voice, style=style, speaker_id=speaker_id)
     elif mode == "stt":
         audio_path = sys.argv[2]
         print(stt(audio_path))

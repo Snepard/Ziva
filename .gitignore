@@ -1,0 +1,28 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Env files
+.env
+.env.*
+
+# Node
+**/node_modules/
+**/dist/
+**/dist-ssr/
+
+# Build artifacts
+*.log
+
+# Audio artifacts
+Backend/_tts*.wav
+Backend/tts_*.wav
+
+# Local ML models (download at runtime)
+Backend/models/
+
+# Editor
+.vscode/
+.idea/
+.DS_Store

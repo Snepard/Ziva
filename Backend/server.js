@@ -31,9 +31,12 @@ function warmupSpeechModels() {
         .catch((err) => console.warn('[warmup] failed to import child_process:', err.message));
 }
 
-// Default TTS voice/model (customize as needed)
-const DEFAULT_VOICE_ID = 'en-US-1'; // Example: 'en-US-1' or your preferred default
-const DEFAULT_TTS_MODEL = 'tts-1'; // Example: 'tts-1' or your preferred default
+// Local Piper TTS voice (set via .env PIPER_VOICE, or override per request)
+const DEFAULT_PIPER_VOICE = process.env.PIPER_VOICE || 'en_US-amy-low';
+const DEFAULT_PIPER_STYLE = (process.env.PIPER_TTS_STYLE || 'default').toLowerCase();
+const DEFAULT_PIPER_SPEAKER_ID = (process.env.PIPER_SPEAKER_ID !== undefined && process.env.PIPER_SPEAKER_ID !== '')
+    ? Number(process.env.PIPER_SPEAKER_ID)
+    : null;
 
 const app = express();
 app.use(cors({
@@ -199,13 +202,19 @@ async function processWithGemini(userMessage, sessionId = 'default') {
     throw new Error(`All Gemini models failed. Last error: ${lastError?.message}`);
 }
 
-// Helper: Text to Speech (ElevenLabs)
-async function textToSpeech(text, { voiceId = DEFAULT_VOICE_ID, ttsModel = DEFAULT_TTS_MODEL } = {}) {
+// Helper: Text to Speech (local Piper)
+async function textToSpeech(text, { piperVoice = DEFAULT_PIPER_VOICE, piperStyle = DEFAULT_PIPER_STYLE, piperSpeakerId = DEFAULT_PIPER_SPEAKER_ID } = {}) {
     // Use local Python TTS (pyttsx3) with ES module imports
     const { spawnSync } = await import('child_process');
     // Coqui TTS reliably writes WAV; MP3 often isn't supported.
     const tempFile = path.join(__dirname, `tts_${Date.now()}.wav`);
-    const py = spawnSync(PYTHON_BIN, ['speech.py', 'tts', text, tempFile], { cwd: __dirname });
+    const args = ['speech.py', 'tts', text, tempFile];
+    if (piperVoice) args.push(piperVoice);
+    if (piperStyle) args.push(piperStyle);
+    if (piperSpeakerId !== null && piperSpeakerId !== undefined && !Number.isNaN(Number(piperSpeakerId))) {
+        args.push(String(Number(piperSpeakerId)));
+    }
+    const py = spawnSync(PYTHON_BIN, args, { cwd: __dirname, env: { ...process.env, PIPER_VOICE: piperVoice } });
     if (py.error) throw new Error('TTS failed: ' + py.error.message);
     if (py.status !== 0) {
         const stderr = py.stderr?.toString()?.trim();
@@ -218,28 +227,59 @@ async function textToSpeech(text, { voiceId = DEFAULT_VOICE_ID, ttsModel = DEFAU
     return `data:audio/wav;base64,${audioBase64}`;
 }
 
+// List downloaded Piper voices on disk
+app.get('/tts/voices', (req, res) => {
+    try {
+        const modelsDir = process.env.PIPER_MODELS_DIR
+            ? path.resolve(process.env.PIPER_MODELS_DIR)
+            : path.resolve(__dirname, 'models', 'piper');
+
+        let voices = [];
+        if (fs.existsSync(modelsDir)) {
+            voices = fs
+                .readdirSync(modelsDir)
+                .filter((f) => f.endsWith('.onnx'))
+                .map((f) => f.replace(/\.onnx$/i, ''))
+                .sort();
+        }
+
+        res.json({
+            defaultVoice: DEFAULT_PIPER_VOICE,
+            defaultStyle: DEFAULT_PIPER_STYLE,
+            defaultSpeakerId: DEFAULT_PIPER_SPEAKER_ID,
+            modelsDir,
+            voices,
+        });
+    } catch (e) {
+        res.status(500).json({ error: 'Failed to list voices', details: e.message });
+    }
+});
+
 // 1. TEXT CHAT ROUTE
 app.post('/chat', async (req, res) => {
     try {
-        const { message, voiceId, ttsModel, sessionId } = req.body;
+        const { message, sessionId, piperVoice, piperStyle, piperSpeakerId } = req.body;
         console.log("Received chat:", message);
         
         const aiResponse = await processWithGemini(message, sessionId || 'default');
         console.log("Gemini response:", aiResponse);
-        const usedVoiceId = voiceId || DEFAULT_VOICE_ID;
-        const usedTtsModel = ttsModel || DEFAULT_TTS_MODEL;
+        const usedPiperVoice = (piperVoice || DEFAULT_PIPER_VOICE);
+        const usedPiperStyle = (piperStyle || DEFAULT_PIPER_STYLE);
+        const usedPiperSpeakerId = (piperSpeakerId !== undefined && piperSpeakerId !== null && piperSpeakerId !== '')
+            ? Number(piperSpeakerId)
+            : DEFAULT_PIPER_SPEAKER_ID;
         
         if (aiResponse.exhausted) {
             // If quota exhausted, do not attempt TTS, just return the message
-            res.json({ ...aiResponse, audio: null, voiceId: usedVoiceId, ttsModel: usedTtsModel });
+            res.json({ ...aiResponse, audio: null, piperVoice: usedPiperVoice, piperStyle: usedPiperStyle, piperSpeakerId: usedPiperSpeakerId });
         } else {
             try {
-                const audioUrl = await textToSpeech(aiResponse.text, { voiceId: usedVoiceId, ttsModel: usedTtsModel });
-                res.json({ ...aiResponse, audio: audioUrl, voiceId: usedVoiceId, ttsModel: usedTtsModel });
+                const audioUrl = await textToSpeech(aiResponse.text, { piperVoice: usedPiperVoice, piperStyle: usedPiperStyle, piperSpeakerId: usedPiperSpeakerId });
+                res.json({ ...aiResponse, audio: audioUrl, piperVoice: usedPiperVoice, piperStyle: usedPiperStyle, piperSpeakerId: usedPiperSpeakerId });
             } catch (ttsError) {
                 console.error("TTS failed, sending response without audio:", ttsError.message);
                 // Send response without audio if TTS fails
-                res.json({ ...aiResponse, audio: null, voiceId: usedVoiceId, ttsModel: usedTtsModel, ttsError: ttsError.message });
+                res.json({ ...aiResponse, audio: null, piperVoice: usedPiperVoice, piperStyle: usedPiperStyle, piperSpeakerId: usedPiperSpeakerId, ttsError: ttsError.message });
             }
         }
     } catch (error) {
@@ -310,26 +350,26 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
         // B. Process text with Gemini
         const sessionId = (req.body && req.body.sessionId) || 'default';
         const aiResponse = await processWithGemini(userText, sessionId);
-        const usedVoiceId = (req.body && req.body.voiceId) || DEFAULT_VOICE_ID;
-        const usedTtsModel = (req.body && req.body.ttsModel) || DEFAULT_TTS_MODEL;
+        const usedPiperVoice = (req.body && req.body.piperVoice) || DEFAULT_PIPER_VOICE;
+        const usedPiperStyle = (req.body && req.body.piperStyle) || DEFAULT_PIPER_STYLE;
         if (aiResponse.exhausted) {
             // If quota exhausted, do not attempt TTS, just return the message
             res.json({
                 userText,
                 ...aiResponse,
                 audio: null,
-                voiceId: usedVoiceId,
-                ttsModel: usedTtsModel
+                piperVoice: usedPiperVoice,
+                piperStyle: usedPiperStyle
             });
         } else {
             try {
-                const audioUrl = await textToSpeech(aiResponse.text, { voiceId: usedVoiceId, ttsModel: usedTtsModel });
+                const audioUrl = await textToSpeech(aiResponse.text, { piperVoice: usedPiperVoice, piperStyle: usedPiperStyle });
                 res.json({
                     userText,
                     ...aiResponse,
                     audio: audioUrl,
-                    voiceId: usedVoiceId,
-                    ttsModel: usedTtsModel
+                    piperVoice: usedPiperVoice,
+                    piperStyle: usedPiperStyle
                 });
             } catch (ttsError) {
                 console.error("TTS failed in voice route, sending response without audio:", ttsError.message);
@@ -337,8 +377,8 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
                     userText,
                     ...aiResponse,
                     audio: null,
-                    voiceId: usedVoiceId,
-                    ttsModel: usedTtsModel,
+                    piperVoice: usedPiperVoice,
+                    piperStyle: usedPiperStyle,
                     ttsError: ttsError.message
                 });
             }
@@ -347,19 +387,6 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
     } catch (error) {
         console.error("Voice processing error:", error.response ? error.response.data : error.message);
         res.status(500).json({ error: "Voice processing failed", details: error.message });
-    }
-});
-
-// 3. List ElevenLabs voices to help choose a correct voice
-app.get('/voices', async (req, res) => {
-    try {
-        const r = await axios.get('https://api.elevenlabs.io/v1/voices', {
-            headers: { 'xi-api-key': ELEVENLABS_API_KEY }
-        });
-        res.json(r.data);
-    } catch (error) {
-        console.error('Failed to fetch voices:', error.response?.data || error.message);
-        res.status(500).json({ error: 'Failed to fetch voices', details: error.message });
     }
 });
 
