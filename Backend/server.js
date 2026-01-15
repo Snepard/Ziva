@@ -13,10 +13,105 @@ import multer from 'multer';
 import FormData from 'form-data';
 import ffmpegPath from 'ffmpeg-static';
 import { performance } from 'perf_hooks';
+import { spawn } from 'child_process';
 
 dotenv.config();
 
 const PYTHON_BIN = process.env.PYTHON_BIN || 'python';
+const USE_SPEECH_WORKER = process.env.USE_SPEECH_WORKER !== '0';
+
+let _speechWorker = null;
+let _speechWorkerStdoutBuf = '';
+const _speechPending = new Map();
+
+function _rejectAllSpeechPending(err) {
+    for (const [, pending] of _speechPending) {
+        clearTimeout(pending.timeout);
+        pending.reject(err);
+    }
+    _speechPending.clear();
+}
+
+function _ensureSpeechWorker(trace = null) {
+    if (!USE_SPEECH_WORKER) return null;
+    if (_speechWorker && !_speechWorker.killed) return _speechWorker;
+
+    _speechWorkerStdoutBuf = '';
+    _speechWorker = spawn(PYTHON_BIN, ['speech.py', 'serve'], {
+        cwd: __dirname,
+        env: process.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    _speechWorker.on('error', (err) => {
+        logError(trace, 'speech-worker-error', err);
+        _rejectAllSpeechPending(err);
+    });
+
+    _speechWorker.on('exit', (code, signal) => {
+        const err = new Error(`speech worker exited (code=${code}, signal=${signal})`);
+        logError(trace, 'speech-worker-exit', err);
+        _rejectAllSpeechPending(err);
+        _speechWorker = null;
+    });
+
+    _speechWorker.stderr.on('data', (chunk) => {
+        // Keep this as console output; it can help diagnose model/download issues.
+        // Avoid timestamps; Render may add its own.
+        const msg = chunk.toString().trim();
+        if (msg) console.warn('[speech-worker]', msg);
+    });
+
+    _speechWorker.stdout.on('data', (chunk) => {
+        _speechWorkerStdoutBuf += chunk.toString();
+        let idx;
+        while ((idx = _speechWorkerStdoutBuf.indexOf('\n')) >= 0) {
+            const line = _speechWorkerStdoutBuf.slice(0, idx).trim();
+            _speechWorkerStdoutBuf = _speechWorkerStdoutBuf.slice(idx + 1);
+            if (!line) continue;
+            let msg;
+            try {
+                msg = JSON.parse(line);
+            } catch {
+                continue;
+            }
+            const id = msg && msg.id;
+            if (!id) continue;
+            const pending = _speechPending.get(id);
+            if (!pending) continue;
+            _speechPending.delete(id);
+            clearTimeout(pending.timeout);
+            if (msg.ok) pending.resolve(msg);
+            else pending.reject(new Error(msg.error || 'speech worker error'));
+        }
+    });
+
+    return _speechWorker;
+}
+
+function _speechRequest(payload, { timeoutMs = 60000 } = {}) {
+    const worker = _ensureSpeechWorker();
+    if (!worker) {
+        return Promise.reject(new Error('Speech worker disabled/unavailable'));
+    }
+
+    const id = payload.id;
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            _speechPending.delete(id);
+            reject(new Error(`speech worker timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+
+        _speechPending.set(id, { resolve, reject, timeout });
+        try {
+            worker.stdin.write(JSON.stringify(payload) + '\n');
+        } catch (e) {
+            clearTimeout(timeout);
+            _speechPending.delete(id);
+            reject(e);
+        }
+    });
+}
 
 // Live logging (console + optional browser stream via SSE)
 const _logStreams = new Set();
@@ -88,9 +183,20 @@ function logError(trace, stage, err, extra) {
 
 // Warm up TTS/STT models on startup so the first /talk request doesn't hang.
 function warmupSpeechModels() {
+    if (USE_SPEECH_WORKER) {
+        try {
+            _ensureSpeechWorker({ reqId: 'warmup', sessionId: 'default' });
+            // Fire-and-forget warmup command
+            _speechRequest({ id: _makeReqId('warmup'), cmd: 'warmup' }, { timeoutMs: 120000 }).catch(() => {});
+            return;
+        } catch {
+            // fall back to old warmup below
+        }
+    }
+
     import('child_process')
-        .then(({ spawn }) => {
-            const child = spawn(PYTHON_BIN, ['speech.py', 'warmup'], {
+        .then(({ spawn: _spawn }) => {
+            const child = _spawn(PYTHON_BIN, ['speech.py', 'warmup'], {
                 cwd: __dirname,
                 stdio: 'inherit',
                 env: process.env,
@@ -330,22 +436,42 @@ async function textToSpeech(text, { piperVoice = DEFAULT_PIPER_VOICE, piperStyle
         textPreview: _truncate(text || ''),
     });
 
-    // Use local Python TTS (pyttsx3) with ES module imports
-    const { spawnSync } = await import('child_process');
-    // Coqui TTS reliably writes WAV; MP3 often isn't supported.
     const tempFile = path.join(__dirname, `tts_${Date.now()}.wav`);
-    const args = ['speech.py', 'tts', text, tempFile];
-    if (piperVoice) args.push(piperVoice);
-    if (piperStyle) args.push(piperStyle);
-    if (piperSpeakerId !== null && piperSpeakerId !== undefined && !Number.isNaN(Number(piperSpeakerId))) {
-        args.push(String(Number(piperSpeakerId)));
+
+    if (USE_SPEECH_WORKER) {
+        _ensureSpeechWorker(t);
+        const id = _makeReqId('tts');
+        await _speechRequest(
+            {
+                id,
+                cmd: 'tts',
+                text,
+                output_path: tempFile,
+                voice: piperVoice,
+                style: piperStyle,
+                speaker_id: (piperSpeakerId !== null && piperSpeakerId !== undefined && !Number.isNaN(Number(piperSpeakerId)))
+                    ? Number(piperSpeakerId)
+                    : null,
+            },
+            { timeoutMs: 120000 }
+        );
+    } else {
+        // Fallback: one-shot python call (slower; reloads models each request)
+        const { spawnSync } = await import('child_process');
+        const args = ['speech.py', 'tts', text, tempFile];
+        if (piperVoice) args.push(piperVoice);
+        if (piperStyle) args.push(piperStyle);
+        if (piperSpeakerId !== null && piperSpeakerId !== undefined && !Number.isNaN(Number(piperSpeakerId))) {
+            args.push(String(Number(piperSpeakerId)));
+        }
+        const py = spawnSync(PYTHON_BIN, args, { cwd: __dirname, env: { ...process.env, PIPER_VOICE: piperVoice } });
+        if (py.error) throw new Error('TTS failed: ' + py.error.message);
+        if (py.status !== 0) {
+            const stderr = py.stderr?.toString()?.trim();
+            throw new Error('TTS failed: ' + (stderr || `python exited with code ${py.status}`));
+        }
     }
-    const py = spawnSync(PYTHON_BIN, args, { cwd: __dirname, env: { ...process.env, PIPER_VOICE: piperVoice } });
-    if (py.error) throw new Error('TTS failed: ' + py.error.message);
-    if (py.status !== 0) {
-        const stderr = py.stderr?.toString()?.trim();
-        throw new Error('TTS failed: ' + (stderr || `python exited with code ${py.status}`));
-    }
+
     if (!fs.existsSync(tempFile)) throw new Error('TTS audio file not created');
     const audioBuffer = fs.readFileSync(tempFile);
     fs.unlinkSync(tempFile);
@@ -496,14 +622,25 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
         logEvent(trace, 'stt-start', 'Running Vosk STT');
 
         // B. Use local Python STT (Vosk)
-        const py = spawnSync(PYTHON_BIN, ['speech.py', 'stt', tempWav], { cwd: __dirname, timeout: 60000, maxBuffer: 10 * 1024 * 1024 });
-        fs.unlinkSync(tempWav);
-        if (py.error) throw new Error('STT failed: ' + py.error.message);
-        if (py.status !== 0) {
-            const stderr = py.stderr?.toString()?.trim();
-            throw new Error('STT failed: ' + (stderr || `python exited with code ${py.status}`));
+        let userText = '';
+        try {
+            if (USE_SPEECH_WORKER) {
+                _ensureSpeechWorker(trace);
+                const id = _makeReqId('stt');
+                const resp = await _speechRequest({ id, cmd: 'stt', audio_path: tempWav }, { timeoutMs: 60000 });
+                userText = (resp && resp.text ? String(resp.text) : '').trim();
+            } else {
+                const py = spawnSync(PYTHON_BIN, ['speech.py', 'stt', tempWav], { cwd: __dirname, timeout: 60000, maxBuffer: 10 * 1024 * 1024 });
+                if (py.error) throw new Error('STT failed: ' + py.error.message);
+                if (py.status !== 0) {
+                    const stderr = py.stderr?.toString()?.trim();
+                    throw new Error('STT failed: ' + (stderr || `python exited with code ${py.status}`));
+                }
+                userText = py.stdout.toString().trim();
+            }
+        } finally {
+            try { fs.unlinkSync(tempWav); } catch { }
         }
-        const userText = py.stdout.toString().trim();
         const detectedLanguage = 'en'; // pyttsx3/SpeechRecognition does not detect language
 
         logEvent(trace, 'stt-complete', 'STT complete', {

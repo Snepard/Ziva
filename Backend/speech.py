@@ -13,6 +13,7 @@ from piper.voice import PiperVoice
 
 
 _PIPER_VOICE_CACHE: dict[tuple[str, str], PiperVoice] = {}
+_VOSK_MODEL: vosk.Model | None = None
 
 
 def _get_env_float(name: str) -> float | None:
@@ -207,8 +208,11 @@ def stt(audio_path: str) -> str:
 
     Expects WAV mono PCM 16-bit.
     """
-    model_dir = _ensure_vosk_model()
-    model = vosk.Model(model_dir)
+    global _VOSK_MODEL
+    if _VOSK_MODEL is None:
+        model_dir = _ensure_vosk_model()
+        _VOSK_MODEL = vosk.Model(model_dir)
+    model = _VOSK_MODEL
 
     with wave.open(audio_path, "rb") as wf:
         if wf.getnchannels() != 1 or wf.getsampwidth() != 2 or wf.getcomptype() != "NONE":
@@ -245,3 +249,60 @@ if __name__ == "__main__":
         _ensure_piper_voice()
         _ensure_vosk_model()
         print("OK")
+    elif mode == "serve":
+        # Simple JSONL RPC server on stdin/stdout.
+        # Each line in: {"id":"...","cmd":"stt"|"tts"|"warmup", ...}
+        # Each line out: {"id":"...","ok":true|false, ...}
+
+        # Eagerly warm up by default (can be expensive only once).
+        try:
+            _ensure_vosk_model()
+        except Exception:
+            pass
+        try:
+            _ensure_piper_voice()
+        except Exception:
+            pass
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+
+            req_id = None
+            try:
+                req = json.loads(line)
+                req_id = req.get("id")
+                cmd = (req.get("cmd") or "").strip().lower()
+
+                if cmd == "warmup":
+                    _ensure_vosk_model()
+                    _ensure_piper_voice()
+                    sys.stdout.write(json.dumps({"id": req_id, "ok": True, "result": "OK"}) + "\n")
+                    sys.stdout.flush()
+                    continue
+
+                if cmd == "stt":
+                    audio_path = req.get("audio_path")
+                    text = stt(str(audio_path))
+                    sys.stdout.write(json.dumps({"id": req_id, "ok": True, "text": text}) + "\n")
+                    sys.stdout.flush()
+                    continue
+
+                if cmd == "tts":
+                    text = req.get("text")
+                    output_path = req.get("output_path")
+                    voice = req.get("voice")
+                    style = req.get("style")
+                    speaker_id = req.get("speaker_id")
+                    speaker_id = int(speaker_id) if speaker_id is not None and str(speaker_id) != "" else None
+                    out = tts(str(text), str(output_path), voice=voice, style=style, speaker_id=speaker_id)
+                    sys.stdout.write(json.dumps({"id": req_id, "ok": True, "output_path": out}) + "\n")
+                    sys.stdout.flush()
+                    continue
+
+                sys.stdout.write(json.dumps({"id": req_id, "ok": False, "error": f"Unknown cmd: {cmd}"}) + "\n")
+                sys.stdout.flush()
+            except Exception as e:
+                sys.stdout.write(json.dumps({"id": req_id, "ok": False, "error": str(e)}) + "\n")
+                sys.stdout.flush()
