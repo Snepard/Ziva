@@ -24,6 +24,8 @@ const ANIMATIONS = [
   'ThoughtfulHeadShake',
 ] as const;
 
+const INTRO_AUDIO_PATH = '/audio/intro.mp3';
+
 function App() {
   const VOICE_ID = (import.meta as any).env?.VITE_TTS_VOICE_ID as string | undefined;
   const TTS_MODEL = ((import.meta as any).env?.VITE_TTS_MODEL as string | undefined) || 'eleven_flash_v2_5';
@@ -59,24 +61,9 @@ function App() {
       return ['Ziva: Hey, I am Ziva!! Your Virtual Friend.', ...prev];
     });
 
-    // Also generate/play intro audio via backend TTS
-    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '';
-    if (!baseUrl) return;
-    try {
-      const res = await fetch(`${baseUrl}/tts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: "Hey, I am Ziva!! Your Virtual Friend.",
-          sessionId,
-        }),
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data?.audio) setAudioUrl(data.audio);
-    } catch (e) {
-      // silent: intro audio is optional
-    }
+    // Play pre-generated intro audio from the frontend public folder.
+    // Cache-bust so clicking "Play intro" replays reliably.
+    setAudioUrl(`${INTRO_AUDIO_PATH}?v=${Date.now()}`);
   };
 
   useEffect(() => {
