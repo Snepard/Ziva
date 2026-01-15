@@ -18,9 +18,8 @@ dotenv.config();
 
 const PYTHON_BIN = process.env.PYTHON_BIN || 'python';
 
-function _isoNow() {
-    return new Date().toISOString();
-}
+// Live logging (console + optional browser stream via SSE)
+const _logStreams = new Set();
 
 function _truncate(s, max = 250) {
     if (typeof s !== 'string') return '';
@@ -33,10 +32,20 @@ function _makeReqId(prefix = 'req') {
     return `${prefix}-${Date.now()}-${rand}`;
 }
 
+function _emitToBrowsers(evt) {
+    const payload = JSON.stringify(evt);
+    for (const client of _logStreams) {
+        if (!client || client.writableEnded) continue;
+        if (client.sessionId && evt.sessionId && client.sessionId !== evt.sessionId) continue;
+        client.res.write(`event: log\n`);
+        client.res.write(`data: ${payload}\n\n`);
+    }
+}
+
 function logEvent(trace, stage, message, extra) {
     const reqId = trace?.reqId || 'req-unknown';
     const sessionId = trace?.sessionId || 'default';
-    const parts = [`[${_isoNow()}]`, `[${reqId}]`, `[session:${sessionId}]`, `[${stage}]`, message];
+    const parts = [`[${reqId}]`, `[session:${sessionId}]`, `[${stage}]`, message];
     if (extra !== undefined) {
         try {
             parts.push(JSON.stringify(extra));
@@ -45,6 +54,15 @@ function logEvent(trace, stage, message, extra) {
         }
     }
     console.log(parts.join(' '));
+
+    _emitToBrowsers({
+        level: 'info',
+        reqId,
+        sessionId,
+        stage,
+        message,
+        extra,
+    });
 }
 
 function logError(trace, stage, err, extra) {
@@ -54,7 +72,18 @@ function logError(trace, stage, err, extra) {
         ...(err?.status ? { status: err.status } : {}),
         ...(extra || {}),
     };
-    console.error(`[${_isoNow()}] [${trace?.reqId || 'req-unknown'}] [session:${trace?.sessionId || 'default'}] [${stage}]`, data);
+    const reqId = trace?.reqId || 'req-unknown';
+    const sessionId = trace?.sessionId || 'default';
+    console.error(`[${reqId}] [session:${sessionId}] [${stage}]`, data);
+
+    _emitToBrowsers({
+        level: 'error',
+        reqId,
+        sessionId,
+        stage,
+        message: msg,
+        extra: data,
+    });
 }
 
 // Warm up TTS/STT models on startup so the first /talk request doesn't hang.
@@ -84,6 +113,36 @@ app.use(cors({
     credentials: true
 }));
 app.use(express.json());
+
+// Live log stream for browser console (Server-Sent Events)
+app.get('/logs/stream', (req, res) => {
+    const sessionId = (req.query && req.query.sessionId) ? String(req.query.sessionId) : null;
+
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        // If behind proxies (nginx), this helps avoid buffering
+        'X-Accel-Buffering': 'no',
+    });
+
+    // Initial comment to establish the stream
+    res.write(': connected\n\n');
+
+    const client = { res, sessionId };
+    _logStreams.add(client);
+
+    // Keepalive ping
+    const keepAlive = setInterval(() => {
+        if (res.writableEnded) return;
+        res.write(': ping\n\n');
+    }, 15000);
+
+    req.on('close', () => {
+        clearInterval(keepAlive);
+        _logStreams.delete(client);
+    });
+});
 
 warmupSpeechModels();
 

@@ -1,5 +1,5 @@
 import { Canvas } from "@react-three/fiber";
-import { Suspense, useState, useRef } from "react";
+import { Suspense, useEffect, useState, useRef } from "react";
 import { Experience } from "./components/Experience";
 
 function App() {
@@ -23,6 +23,39 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+
+  // Stream backend pipeline logs live to the browser console
+  useEffect(() => {
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '';
+    if (!baseUrl) return;
+
+    const streamUrl = `${baseUrl}/logs/stream?sessionId=${encodeURIComponent(sessionId)}`;
+    const es = new EventSource(streamUrl);
+
+    const onLog = (ev: MessageEvent) => {
+      try {
+        const payload = JSON.parse(ev.data);
+        const prefix = `[${payload.reqId}] [session:${payload.sessionId}] [${payload.stage}]`;
+        if (payload.level === 'error') {
+          console.error(prefix, payload.message, payload.extra);
+        } else {
+          console.log(prefix, payload.message, payload.extra);
+        }
+      } catch {
+        console.log('[log-stream]', ev.data);
+      }
+    };
+
+    es.addEventListener('log', onLog as any);
+    es.onerror = () => {
+      // Keep quiet; EventSource will auto-reconnect.
+    };
+
+    return () => {
+      es.removeEventListener('log', onLog as any);
+      es.close();
+    };
+  }, [sessionId]);
 
   // ... (Keep your handleSend, startRecording, stopRecording, sendAudio functions exactly as they were) ...
   const handleSend = async (text: string) => {
