@@ -742,4 +742,41 @@ app.get('/models', async (req, res) => {
     }
 });
 
+// 5. TTS ONLY ROUTE (no Gemini) - useful for intro/testing
+app.post('/tts', async (req, res) => {
+    const sessionId = (req.body && req.body.sessionId) || 'default';
+    const trace = { reqId: _makeReqId('ttsroute'), sessionId };
+    try {
+        const { text, piperVoice, piperStyle, piperSpeakerId } = req.body || {};
+        if (!text || typeof text !== 'string') {
+            return res.status(400).json({ error: 'Missing text' });
+        }
+
+        const usedPiperVoice = (piperVoice || DEFAULT_PIPER_VOICE);
+        const usedPiperStyle = (piperStyle || DEFAULT_PIPER_STYLE);
+        const usedPiperSpeakerId = (piperSpeakerId !== undefined && piperSpeakerId !== null && piperSpeakerId !== '')
+            ? Number(piperSpeakerId)
+            : DEFAULT_PIPER_SPEAKER_ID;
+
+        logEvent(trace, 'tts-requested', 'TTS-only request received', {
+            piperVoice: usedPiperVoice,
+            piperStyle: usedPiperStyle,
+            piperSpeakerId: usedPiperSpeakerId,
+            textLen: text.length,
+            textPreview: _truncate(text),
+        });
+
+        const audioUrl = await textToSpeech(text, {
+            piperVoice: usedPiperVoice,
+            piperStyle: usedPiperStyle,
+            piperSpeakerId: usedPiperSpeakerId,
+        }, trace);
+
+        res.json({ audio: audioUrl, piperVoice: usedPiperVoice, piperStyle: usedPiperStyle, piperSpeakerId: usedPiperSpeakerId });
+    } catch (e) {
+        logError(trace, 'tts-only-error', e);
+        res.status(500).json({ error: 'TTS failed', details: e.message });
+    }
+});
+
 app.listen(3000, () => console.log("Server running on port 3000"));

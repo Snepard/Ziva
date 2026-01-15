@@ -2,6 +2,28 @@ import { Canvas } from "@react-three/fiber";
 import { Suspense, useEffect, useState, useRef } from "react";
 import { Experience } from "./components/Experience";
 
+const FACIAL_EXPRESSIONS = ['default', 'smile', 'sad', 'surprised', 'angry', 'crazy'] as const;
+const ANIMATIONS = [
+  'Angry',
+  'Arguing',
+  'BlowKiss',
+  'Clapping',
+  'Excited',
+  'GangamStyleDance',
+  'Greeting',
+  'Happy',
+  'Idle',
+  'LookAround',
+  'No',
+  'SalsaDance',
+  'SambaDance',
+  'Talking',
+  'Thankful',
+  'Thinking',
+  'ThoughtfulHeadNod',
+  'ThoughtfulHeadShake',
+] as const;
+
 function App() {
   const VOICE_ID = (import.meta as any).env?.VITE_TTS_VOICE_ID as string | undefined;
   const TTS_MODEL = ((import.meta as any).env?.VITE_TTS_MODEL as string | undefined) || 'eleven_flash_v2_5';
@@ -17,12 +39,50 @@ function App() {
   // Ziva State
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [expression, setExpression] = useState("default");
+  const [expressionTrigger, setExpressionTrigger] = useState(0);
   const [animation, setAnimation] = useState("Idle");
   const [animationTrigger, setAnimationTrigger] = useState(0);
   
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+
+  const playIntro = async () => {
+    // Small "hello" animation for first load + manual testing.
+    setExpression('smile');
+    setExpressionTrigger(prev => prev + 1);
+    setAnimation('Greeting');
+    setAnimationTrigger(prev => prev + 1);
+    setChatHistory(prev => {
+      // avoid duplicating intro message too aggressively
+      if (prev.some(m => m.startsWith('Ziva: Hey, I am Ziva!!'))) return prev;
+      return ['Ziva: Hey, I am Ziva!! Your Virtual Friend.', ...prev];
+    });
+
+    // Also generate/play intro audio via backend TTS
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '';
+    if (!baseUrl) return;
+    try {
+      const res = await fetch(`${baseUrl}/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: "Hey, I am Ziva!! Your Virtual Friend.",
+          sessionId,
+        }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.audio) setAudioUrl(data.audio);
+    } catch (e) {
+      // silent: intro audio is optional
+    }
+  };
+
+  useEffect(() => {
+    void playIntro();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Stream backend pipeline logs live to the browser console
   useEffect(() => {
@@ -194,6 +254,77 @@ function App() {
             <div className="text-white/70 text-xs">Online</div>
           </div>
 
+          {/* Avatar test dropdown */}
+          <div className="px-4 py-3 border-b border-slate-700/40 bg-slate-900/40">
+            <details className="select-none">
+              <summary className="cursor-pointer text-xs text-slate-200/90 font-medium">Avatar tester (expressions / animations)</summary>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className="col-span-2">
+                  <button
+                    onClick={playIntro}
+                    className="w-full bg-slate-700/60 hover:bg-slate-700 text-white text-xs px-3 py-2 rounded-lg border border-slate-600/40"
+                    type="button"
+                  >
+                    Play intro
+                  </button>
+                </div>
+
+                <label className="text-xs text-slate-300 flex flex-col gap-1">
+                  Expression
+                  <select
+                    className="bg-slate-800/60 text-slate-100 px-3 py-2 rounded-lg border border-slate-600/40"
+                    value={expression}
+                    onChange={(e) => {
+                      setExpression(e.target.value);
+                      setExpressionTrigger(prev => prev + 1);
+                    }}
+                  >
+                    {FACIAL_EXPRESSIONS.map((exp) => (
+                      <option key={exp} value={exp}>{exp}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="text-xs text-slate-300 flex flex-col gap-1">
+                  Animation
+                  <select
+                    className="bg-slate-800/60 text-slate-100 px-3 py-2 rounded-lg border border-slate-600/40"
+                    value={animation}
+                    onChange={(e) => {
+                      setAnimation(e.target.value);
+                      setAnimationTrigger(prev => prev + 1);
+                    }}
+                  >
+                    {ANIMATIONS.map((anim) => (
+                      <option key={anim} value={anim}>{anim}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <button
+                  onClick={() => setAnimation('Idle')}
+                  className="col-span-1 bg-slate-800/60 hover:bg-slate-800 text-white text-xs px-3 py-2 rounded-lg border border-slate-600/40"
+                  type="button"
+                >
+                  Set Idle
+                </button>
+                <button
+                  onClick={() => {
+                    setExpression('default');
+                    setExpressionTrigger(prev => prev + 1);
+                  }}
+                  className="col-span-1 bg-slate-800/60 hover:bg-slate-800 text-white text-xs px-3 py-2 rounded-lg border border-slate-600/40"
+                  type="button"
+                >
+                  Reset face
+                </button>
+              </div>
+              <div className="mt-2 text-[11px] text-slate-400">
+                Note: expressions auto-reset after ~2s.
+              </div>
+            </details>
+          </div>
+
           {/* Chat History */}
           <div className="h-80 overflow-y-auto p-4 space-y-3 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent">
             {chatHistory.map((msg, i) => {
@@ -284,6 +415,7 @@ function App() {
           <Experience 
             audioUrl={audioUrl} 
             expression={expression} 
+            expressionTrigger={expressionTrigger}
             animation={animation}
             animationTrigger={animationTrigger}
           />

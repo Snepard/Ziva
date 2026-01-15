@@ -4,11 +4,12 @@ import { Ziva } from "./Ziva";
 interface ExperienceProps {
     audioUrl: string | null;
     expression: string;
+    expressionTrigger: number;
     animation: string;
     animationTrigger: number;
 }
 
-export const Experience = ({ audioUrl, expression, animation, animationTrigger }: ExperienceProps) => {
+export const Experience = ({ audioUrl, expression, expressionTrigger, animation, animationTrigger }: ExperienceProps) => {
     return (
         <>
             {/* 1. Controls */}
@@ -46,6 +47,7 @@ export const Experience = ({ audioUrl, expression, animation, animationTrigger }
                 <Ziva
                     audioUrl={audioUrl}
                     expression={expression}
+                    expressionTrigger={expressionTrigger}
                     animation={animation}
                     animationTrigger={animationTrigger}
                 />

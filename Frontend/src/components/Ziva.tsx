@@ -112,11 +112,12 @@ type GLTFResult = GLTF & {
 type ZivaProps = {
   audioUrl?: string | null;
   expression?: string; // New prop
+  expressionTrigger?: number; // Trigger to re-apply expressions
   animation?: string;  // New prop
   animationTrigger?: number; // Trigger to replay animations
 } & React.JSX.IntrinsicElements['group']
 
-export function Ziva({ audioUrl, expression, animation, animationTrigger, ...props }: ZivaProps) {
+export function Ziva({ audioUrl, expression, expressionTrigger, animation, animationTrigger, ...props }: ZivaProps) {
   const VISEME_INTENSITY = 1.0 // Reduced slightly for better blending
   const LERP_SPEED = 0.25
   const VISEME_LERP_SPEED = 0.5 // Faster lerp for mouth movement
@@ -179,7 +180,7 @@ export function Ziva({ audioUrl, expression, animation, animationTrigger, ...pro
         clearTimeout(expressionTimeoutRef.current)
       }
     }
-  }, [expression])
+  }, [expression, expressionTrigger])
 
   useEffect(() => {
     // If parent provides an animation, use it. Otherwise, default/idle.
