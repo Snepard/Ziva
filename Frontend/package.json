@@ -17,6 +17,7 @@
     "leva": "^0.10.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-hot-toast": "^2.6.0",
     "tailwindcss": "^4.1.17",
     "three": "^0.181.2",
     "wawa-lipsync": "^0.0.2"

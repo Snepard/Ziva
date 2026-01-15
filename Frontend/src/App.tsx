@@ -1,6 +1,7 @@
 import { Canvas } from "@react-three/fiber";
 import { Suspense, useEffect, useState, useRef } from "react";
 import { Experience } from "./components/Experience";
+import { Toaster, toast } from "react-hot-toast";
 
 const FACIAL_EXPRESSIONS = ['default', 'smile', 'sad', 'surprised', 'angry', 'crazy'] as const;
 const ANIMATIONS = [
@@ -83,13 +84,62 @@ function App() {
       try {
         const payload = JSON.parse(ev.data);
         const prefix = `[${payload.reqId}] [session:${payload.sessionId}] [${payload.stage}]`;
+
+        // Map backend stages to UX toasts
+        const stage = String(payload.stage || '');
+        const toastId = payload?.reqId ? `${payload.reqId}:${stage}` : undefined;
+        const quickPromise = new Promise<void>((resolve) => window.setTimeout(resolve, 350));
+
+        if (stage === 'audio-received') {
+          toast.promise(
+            quickPromise,
+            {
+              loading: 'Receiving speech...',
+              success: <b>Speech received!</b>,
+              error: <b>Could not save.</b>,
+            },
+            toastId ? { id: toastId } : undefined
+          );
+        }
+        if (stage === 'stt-complete') {
+          toast.promise(
+            quickPromise,
+            {
+              loading: 'Converting speech to text...',
+              success: <b>Speech converted to text!</b>,
+              error: <b>Could not save.</b>,
+            },
+            toastId ? { id: toastId } : undefined
+          );
+        }
+        if (stage === 'gemini-received') {
+          toast.promise(
+            quickPromise,
+            {
+              loading: 'Waiting for AI response...',
+              success: <b>AI agent response received!</b>,
+              error: <b>Could not save.</b>,
+            },
+            toastId ? { id: toastId } : undefined
+          );
+        }
+        if (stage === 'tts-complete') {
+          toast.promise(
+            quickPromise,
+            {
+              loading: 'Generating speech...',
+              success: <b>Text to speech complete!</b>,
+              error: <b>Could not save.</b>,
+            },
+            toastId ? { id: toastId } : undefined
+          );
+        }
+
         if (payload.level === 'error') {
           console.error(prefix, payload.message, payload.extra);
-        } else {
-          console.log(prefix, payload.message, payload.extra);
         }
       } catch {
-        console.log('[log-stream]', ev.data);
+        // ignore malformed SSE payloads
       }
     };
 
@@ -213,15 +263,12 @@ function App() {
   };
 
   const updateAvatarState = (data: any) => {
-    console.log("Received from backend:", data);
     setChatHistory(prev => [...prev, `Ziva: ${data.text}`]);
     setAudioUrl(data.audio);
     if(data.facialExpression) {
-      console.log("Setting expression to:", data.facialExpression);
       setExpression(data.facialExpression);
     }
     if(data.animation) {
-      console.log("Setting animation to:", data.animation);
       setAnimation(data.animation);
       setAnimationTrigger(prev => prev + 1); // Trigger animation replay
     }
@@ -229,6 +276,30 @@ function App() {
 
   return (
     <>
+      {/* Toasts */}
+      <div>
+        <Toaster
+          position="top-left"
+          reverseOrder={false}
+          toastOptions={{
+            duration: 2200,
+            style: {
+              background: 'rgba(255, 255, 255, 0.10)',
+              color: '#ffffff',
+              border: '1px solid rgba(255, 255, 255, 0.28)',
+              padding: '10px 12px',
+              borderRadius: '12px',
+              fontSize: '12px',
+              lineHeight: '1.15',
+              maxWidth: '260px',
+              boxShadow: '0 12px 30px rgba(0,0,0,0.25)',
+              backdropFilter: 'blur(14px)',
+              WebkitBackdropFilter: 'blur(14px)',
+            },
+          }}
+        />
+      </div>
+
       {/* Chat Overlay */}
       <div className="fixed bottom-6 left-6 z-10 w-[420px]">
         <div className="bg-linear-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-2xl rounded-2xl border border-slate-700/50 shadow-2xl overflow-hidden">
