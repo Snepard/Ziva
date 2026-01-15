@@ -12,10 +12,50 @@ import axios from 'axios';
 import multer from 'multer';
 import FormData from 'form-data';
 import ffmpegPath from 'ffmpeg-static';
+import { performance } from 'perf_hooks';
 
 dotenv.config();
 
 const PYTHON_BIN = process.env.PYTHON_BIN || 'python';
+
+function _isoNow() {
+    return new Date().toISOString();
+}
+
+function _truncate(s, max = 250) {
+    if (typeof s !== 'string') return '';
+    if (s.length <= max) return s;
+    return s.slice(0, max) + `…(+${s.length - max} chars)`;
+}
+
+function _makeReqId(prefix = 'req') {
+    const rand = Math.random().toString(16).slice(2, 8);
+    return `${prefix}-${Date.now()}-${rand}`;
+}
+
+function logEvent(trace, stage, message, extra) {
+    const reqId = trace?.reqId || 'req-unknown';
+    const sessionId = trace?.sessionId || 'default';
+    const parts = [`[${_isoNow()}]`, `[${reqId}]`, `[session:${sessionId}]`, `[${stage}]`, message];
+    if (extra !== undefined) {
+        try {
+            parts.push(JSON.stringify(extra));
+        } catch {
+            // ignore non-serializable extras
+        }
+    }
+    console.log(parts.join(' '));
+}
+
+function logError(trace, stage, err, extra) {
+    const msg = err?.message || String(err);
+    const data = {
+        message: msg,
+        ...(err?.status ? { status: err.status } : {}),
+        ...(extra || {}),
+    };
+    console.error(`[${_isoNow()}] [${trace?.reqId || 'req-unknown'}] [session:${trace?.sessionId || 'default'}] [${stage}]`, data);
+}
 
 // Warm up TTS/STT models on startup so the first /talk request doesn't hang.
 function warmupSpeechModels() {
@@ -143,7 +183,9 @@ Match the mood - Talking for most stuff, Happy/Excited when hyped, Idle for chil
 `;
 
 // Helper: Process Chat with Gemini
-async function processWithGemini(userMessage, sessionId = 'default') {
+async function processWithGemini(userMessage, sessionId = 'default', trace = null) {
+    const t = trace ? { ...trace, sessionId: trace.sessionId || sessionId } : { reqId: _makeReqId('gemini'), sessionId };
+    const startedAt = performance.now();
     let lastError;
     // Get or create chat history for this session
     if (!chatSessions.has(sessionId)) {
@@ -154,7 +196,7 @@ async function processWithGemini(userMessage, sessionId = 'default') {
     for (const candidate of MODEL_CANDIDATES) {
         try {
             if (candidate !== activeModelId) {
-                console.log(`Switching to model: ${candidate}`);
+                logEvent(t, 'gemini-model-switch', `Switching to model: ${candidate}`);
                 activeModelId = candidate;
                 model = getModel(activeModelId);
             }
@@ -167,8 +209,23 @@ async function processWithGemini(userMessage, sessionId = 'default') {
             const chat = model.startChat({
                 history: chatHistory,
             });
+
+            logEvent(t, 'gemini-send', 'Sending user text to Gemini', {
+                model: candidate,
+                textLen: (userMessage || '').length,
+                preview: _truncate(userMessage || ''),
+            });
+
             const result = await chat.sendMessage(userMessage);
             const response = JSON.parse(result.response.text());
+
+            logEvent(t, 'gemini-received', 'Gemini response received', {
+                model: candidate,
+                durMs: Math.round((performance.now() - startedAt) * 10) / 10,
+                responseTextLen: (response?.text || '').length,
+                responsePreview: _truncate(response?.text || ''),
+            });
+
             // Save to history
             history.push(
                 { role: "user", parts: [{ text: userMessage }] },
@@ -189,7 +246,7 @@ async function processWithGemini(userMessage, sessionId = 'default') {
                     exhausted: true
                 };
             }
-            console.warn(`Model ${candidate} failed:`, err.message);
+            logError(t, 'gemini-failed', err, { model: candidate });
             lastError = err;
             // If it's a 404 (Not Found) or 400 (Bad Request), try the next model
             // Otherwise (e.g., Quota exceeded), keep trying or handle gracefully
@@ -203,7 +260,17 @@ async function processWithGemini(userMessage, sessionId = 'default') {
 }
 
 // Helper: Text to Speech (local Piper)
-async function textToSpeech(text, { piperVoice = DEFAULT_PIPER_VOICE, piperStyle = DEFAULT_PIPER_STYLE, piperSpeakerId = DEFAULT_PIPER_SPEAKER_ID } = {}) {
+async function textToSpeech(text, { piperVoice = DEFAULT_PIPER_VOICE, piperStyle = DEFAULT_PIPER_STYLE, piperSpeakerId = DEFAULT_PIPER_SPEAKER_ID } = {}, trace = null) {
+    const t = trace ? { ...trace } : { reqId: _makeReqId('tts'), sessionId: 'default' };
+    const startedAt = performance.now();
+    logEvent(t, 'tts-start', 'TTS started', {
+        piperVoice,
+        piperStyle,
+        piperSpeakerId,
+        textLen: (text || '').length,
+        textPreview: _truncate(text || ''),
+    });
+
     // Use local Python TTS (pyttsx3) with ES module imports
     const { spawnSync } = await import('child_process');
     // Coqui TTS reliably writes WAV; MP3 often isn't supported.
@@ -224,6 +291,13 @@ async function textToSpeech(text, { piperVoice = DEFAULT_PIPER_VOICE, piperStyle
     const audioBuffer = fs.readFileSync(tempFile);
     fs.unlinkSync(tempFile);
     const audioBase64 = audioBuffer.toString('base64');
+
+    logEvent(t, 'tts-complete', 'TTS complete', {
+        durMs: Math.round((performance.now() - startedAt) * 10) / 10,
+        wavBytes: audioBuffer.length,
+        base64Len: audioBase64.length,
+    });
+
     return `data:audio/wav;base64,${audioBase64}`;
 }
 
@@ -257,12 +331,21 @@ app.get('/tts/voices', (req, res) => {
 
 // 1. TEXT CHAT ROUTE
 app.post('/chat', async (req, res) => {
+    const sessionId = (req.body && req.body.sessionId) || 'default';
+    const trace = { reqId: _makeReqId('chat'), sessionId };
+    const startedAt = performance.now();
     try {
-        const { message, sessionId, piperVoice, piperStyle, piperSpeakerId } = req.body;
-        console.log("Received chat:", message);
+        const { message, piperVoice, piperStyle, piperSpeakerId } = req.body;
+        logEvent(trace, 'chat-received', 'Chat received', {
+            textLen: (message || '').length,
+            preview: _truncate(message || ''),
+        });
         
-        const aiResponse = await processWithGemini(message, sessionId || 'default');
-        console.log("Gemini response:", aiResponse);
+        const aiResponse = await processWithGemini(message, sessionId, trace);
+        logEvent(trace, 'chat-gemini-done', 'Gemini processing complete', {
+            durMs: Math.round((performance.now() - startedAt) * 10) / 10,
+        });
+
         const usedPiperVoice = (piperVoice || DEFAULT_PIPER_VOICE);
         const usedPiperStyle = (piperStyle || DEFAULT_PIPER_STYLE);
         const usedPiperSpeakerId = (piperSpeakerId !== undefined && piperSpeakerId !== null && piperSpeakerId !== '')
@@ -274,26 +357,44 @@ app.post('/chat', async (req, res) => {
             res.json({ ...aiResponse, audio: null, piperVoice: usedPiperVoice, piperStyle: usedPiperStyle, piperSpeakerId: usedPiperSpeakerId });
         } else {
             try {
-                const audioUrl = await textToSpeech(aiResponse.text, { piperVoice: usedPiperVoice, piperStyle: usedPiperStyle, piperSpeakerId: usedPiperSpeakerId });
+                logEvent(trace, 'tts-requested', 'Starting TTS for Gemini response', {
+                    piperVoice: usedPiperVoice,
+                    piperStyle: usedPiperStyle,
+                    piperSpeakerId: usedPiperSpeakerId,
+                    textLen: (aiResponse?.text || '').length,
+                    textPreview: _truncate(aiResponse?.text || ''),
+                });
+                const audioUrl = await textToSpeech(aiResponse.text, { piperVoice: usedPiperVoice, piperStyle: usedPiperStyle, piperSpeakerId: usedPiperSpeakerId }, trace);
+                logEvent(trace, 'chat-complete', 'Chat completed with audio', {
+                    totalDurMs: Math.round((performance.now() - startedAt) * 10) / 10,
+                    audioDataUrlLen: (audioUrl || '').length,
+                });
                 res.json({ ...aiResponse, audio: audioUrl, piperVoice: usedPiperVoice, piperStyle: usedPiperStyle, piperSpeakerId: usedPiperSpeakerId });
             } catch (ttsError) {
-                console.error("TTS failed, sending response without audio:", ttsError.message);
+                logError(trace, 'tts-failed', ttsError);
                 // Send response without audio if TTS fails
                 res.json({ ...aiResponse, audio: null, piperVoice: usedPiperVoice, piperStyle: usedPiperStyle, piperSpeakerId: usedPiperSpeakerId, ttsError: ttsError.message });
             }
         }
     } catch (error) {
-        console.error("Chat processing error:", error);
+        logError(trace, 'chat-error', error);
         res.status(500).json({ error: "Processing failed", details: error.message });
     }
 });
 
 // 2. VOICE CHAT ROUTE (Speech-to-Text)
 app.post('/talk', upload.single('audio'), async (req, res) => {
+    const sessionId = (req.body && req.body.sessionId) || 'default';
+    const trace = { reqId: _makeReqId('talk'), sessionId };
+    const startedAt = performance.now();
     try {
         if (!req.file) return res.status(400).json({ error: "No audio file provided" });
 
-        console.log("Received audio file size:", req.file.size, "mimetype:", req.file.mimetype);
+        logEvent(trace, 'audio-received', 'Audio received', {
+            size: req.file.size,
+            mimetype: req.file.mimetype,
+            fieldname: req.file.fieldname,
+        });
 
         // A. Convert browser-recorded audio (often webm/ogg) into WAV mono PCM for Vosk
         const { spawnSync } = await import('child_process');
@@ -312,7 +413,10 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
         const tempWav = path.join(__dirname, `${base}.wav`);
         fs.writeFileSync(tempInput, req.file.buffer);
 
-        console.log('[stt] Converting audio to WAV...');
+        const sttConvertStartedAt = performance.now();
+        logEvent(trace, 'stt-convert-start', 'Converting audio to WAV', {
+            inputExt,
+        });
         const ff = spawnSync(
             ffmpegPath,
             ['-hide_banner', '-loglevel', 'error', '-y', '-i', tempInput, '-ac', '1', '-ar', '16000', '-f', 'wav', tempWav],
@@ -325,7 +429,12 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
             throw new Error('Audio convert failed: ' + (ffErr || `ffmpeg exited with code ${ff.status}`));
         }
 
-        console.log('[stt] Running Vosk STT...');
+        logEvent(trace, 'stt-convert-complete', 'Audio conversion complete', {
+            durMs: Math.round((performance.now() - sttConvertStartedAt) * 10) / 10,
+        });
+
+        const sttStartedAt = performance.now();
+        logEvent(trace, 'stt-start', 'Running Vosk STT');
 
         // B. Use local Python STT (Vosk)
         const py = spawnSync(PYTHON_BIN, ['speech.py', 'stt', tempWav], { cwd: __dirname, timeout: 60000, maxBuffer: 10 * 1024 * 1024 });
@@ -337,10 +446,17 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
         }
         const userText = py.stdout.toString().trim();
         const detectedLanguage = 'en'; // pyttsx3/SpeechRecognition does not detect language
-        console.log("User said:", userText, "| Detected language:", detectedLanguage);
+
+        logEvent(trace, 'stt-complete', 'STT complete', {
+            durMs: Math.round((performance.now() - sttStartedAt) * 10) / 10,
+            detectedLanguage,
+            textLen: (userText || '').length,
+            transcript: userText,
+        });
 
         // If STT couldn't decode/transcribe, don't call Gemini (prevents misleading quota messages)
         if (!userText || userText === 'Could not understand audio' || userText.startsWith('STT error:')) {
+            logEvent(trace, 'stt-rejected', 'STT produced unusable transcript', { transcript: userText });
             return res.status(400).json({
                 error: 'Speech-to-text failed',
                 details: userText || 'Empty transcript'
@@ -348,12 +464,18 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
         }
 
         // B. Process text with Gemini
-        const sessionId = (req.body && req.body.sessionId) || 'default';
-        const aiResponse = await processWithGemini(userText, sessionId);
+        logEvent(trace, 'gemini-request', 'Sending transcript to Gemini', {
+            textLen: (userText || '').length,
+            transcriptPreview: _truncate(userText || ''),
+        });
+        const aiResponse = await processWithGemini(userText, sessionId, trace);
         const usedPiperVoice = (req.body && req.body.piperVoice) || DEFAULT_PIPER_VOICE;
         const usedPiperStyle = (req.body && req.body.piperStyle) || DEFAULT_PIPER_STYLE;
         if (aiResponse.exhausted) {
             // If quota exhausted, do not attempt TTS, just return the message
+            logEvent(trace, 'voice-complete', 'Voice request complete (quota exhausted; no TTS)', {
+                totalDurMs: Math.round((performance.now() - startedAt) * 10) / 10,
+            });
             res.json({
                 userText,
                 ...aiResponse,
@@ -363,7 +485,17 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
             });
         } else {
             try {
-                const audioUrl = await textToSpeech(aiResponse.text, { piperVoice: usedPiperVoice, piperStyle: usedPiperStyle });
+                logEvent(trace, 'tts-requested', 'Starting TTS for Gemini response', {
+                    piperVoice: usedPiperVoice,
+                    piperStyle: usedPiperStyle,
+                    textLen: (aiResponse?.text || '').length,
+                    textPreview: _truncate(aiResponse?.text || ''),
+                });
+                const audioUrl = await textToSpeech(aiResponse.text, { piperVoice: usedPiperVoice, piperStyle: usedPiperStyle }, trace);
+                logEvent(trace, 'voice-complete', 'Voice request complete (with audio)', {
+                    totalDurMs: Math.round((performance.now() - startedAt) * 10) / 10,
+                    audioDataUrlLen: (audioUrl || '').length,
+                });
                 res.json({
                     userText,
                     ...aiResponse,
@@ -372,7 +504,7 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
                     piperStyle: usedPiperStyle
                 });
             } catch (ttsError) {
-                console.error("TTS failed in voice route, sending response without audio:", ttsError.message);
+                logError(trace, 'tts-failed', ttsError);
                 res.json({
                     userText,
                     ...aiResponse,
@@ -385,7 +517,9 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
         }
 
     } catch (error) {
-        console.error("Voice processing error:", error.response ? error.response.data : error.message);
+        logError(trace, 'voice-error', error, {
+            responseData: error?.response?.data,
+        });
         res.status(500).json({ error: "Voice processing failed", details: error.message });
     }
 });
