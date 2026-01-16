@@ -244,7 +244,3 @@ Backend (`Backend/.env`):
 Frontend (`Frontend/.env`):
 
 - `VITE_API_BASE_URL` — backend base URL (default: `http://localhost:3000`)
-
-## License
-
-No top-level license file is included currently. Add a `LICENSE` file if you plan to distribute the project.
