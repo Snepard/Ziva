@@ -61,9 +61,10 @@ At a high level:
 
 - React 19 + TypeScript
 - Vite (rolldown-vite)
-- Tailwind CSS
+- Tailwind CSS v4 (via `@tailwindcss/vite`)
 - Three.js via @react-three/fiber + @react-three/drei
 - Lip sync: wawa-lipsync
+- UI feedback: react-hot-toast
 - (Optional) Leva (debug controls)
 
 ### Backend
@@ -73,6 +74,7 @@ At a high level:
 - `cors`, `dotenv`
 - `multer` for audio upload
 - `ffmpeg-static` to convert browser audio (webm/ogg) → WAV mono PCM 16-bit
+- `axios` (+ `form-data`) for HTTP calls
 - Spawns Python (`Backend/speech.py`) for TTS/STT
 
 ### Speech (Python)
@@ -134,6 +136,28 @@ Ziva/
 
 ### 1) Backend
 
+Recommended: create a virtual environment at the repo root (the backend runner auto-detects `./.venv`):
+
+```bash
+cd ..
+python -m venv .venv
+```
+
+Activate it:
+
+- PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Install Python deps (required for voice):
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r Backend/requirements.txt
+```
+
 Install Node deps:
 
 ```bash
@@ -141,27 +165,14 @@ cd Backend
 npm install
 ```
 
-Set env vars (copy the template):
-
-```bash
-copy .env.example .env
-```
-
-Edit `Backend/.env` and set at least:
+Create `Backend/.env` and set at least:
 
 ```env
 FRONTEND_URL=http://localhost:5173
 GEMINI_API_KEY=your_key_here
 ```
 
-Install Python deps (required for voice):
-
-```bash
-cd ..
-python -m venv .venv
-.venv\Scripts\python -m pip install --upgrade pip
-.venv\Scripts\python -m pip install vosk piper-tts
-```
+If your Python isn’t on PATH (or you don’t want to use `./.venv`), you can also set `PYTHON_BIN` in `Backend/.env`.
 
 Run the backend:
 
