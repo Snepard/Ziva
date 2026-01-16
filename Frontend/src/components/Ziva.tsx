@@ -121,6 +121,7 @@ export function Ziva({ audioUrl, expression, expressionTrigger, animation, anima
   const VISEME_INTENSITY = 1.0 // Reduced slightly for better blending
   const LERP_SPEED = 0.25
   const VISEME_LERP_SPEED = 0.5 // Faster lerp for mouth movement
+  const SPEAKING_MOUTH_EXPRESSION_ATTENUATION = 0.25
   
   const group = useRef<THREE.Group>(null)
   const { scene } = useGLTF('/models/Ziva.glb')
@@ -152,10 +153,12 @@ export function Ziva({ audioUrl, expression, expressionTrigger, animation, anima
   }, [clips])
 
   const { actions, names } = useAnimations(clips || [], group)
-  const [currentAnimation, setCurrentAnimation] = useState(names[0])
+  const [currentAnimation, setCurrentAnimation] = useState(() => names[0] || 'Idle')
   const [currentExpression, setCurrentExpression] = useState('default')
   const animationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const expressionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const wasAudioPlayingRef = useRef(false)
+  const preAudioAnimationRef = useRef<string | null>(null)
 
   // Handle expression changes with auto-reset to default after 2 seconds
   useEffect(() => {
@@ -295,6 +298,38 @@ export function Ziva({ audioUrl, expression, expressionTrigger, animation, anima
     audioRef.current.crossOrigin = 'anonymous';
     audioRef.current.src = audioUrl;
 
+    // Drive Talking animation while audio is playing.
+    const onPlay = () => {
+      wasAudioPlayingRef.current = true
+      if (actions['Talking']) {
+        // Only snapshot if we're not already in Talking.
+        if (currentAnimation !== 'Talking') {
+          preAudioAnimationRef.current = currentAnimation
+        }
+        setCurrentAnimation('Talking')
+      }
+    }
+
+    const onStop = () => {
+      if (!wasAudioPlayingRef.current) return
+      wasAudioPlayingRef.current = false
+
+      // Restore the requested animation from props (or Idle) after speaking.
+      const desired = (animation && names.includes(animation)) ? animation : 'Idle'
+      if (desired !== 'Talking') {
+        setCurrentAnimation(desired)
+      } else if (preAudioAnimationRef.current && preAudioAnimationRef.current !== 'Talking') {
+        setCurrentAnimation(preAudioAnimationRef.current)
+      } else {
+        setCurrentAnimation('Idle')
+      }
+      preAudioAnimationRef.current = null
+    }
+
+    audioRef.current.addEventListener('play', onPlay)
+    audioRef.current.addEventListener('ended', onStop)
+    audioRef.current.addEventListener('pause', onStop)
+
     // Wait for audio to be ready, then connect lipsync and play
     const handleCanPlay = async () => {
       try {
@@ -314,10 +349,13 @@ export function Ziva({ audioUrl, expression, expressionTrigger, animation, anima
     return () => {
       if (audioRef.current) {
         audioRef.current.removeEventListener('canplay', handleCanPlay);
+        audioRef.current.removeEventListener('play', onPlay)
+        audioRef.current.removeEventListener('ended', onStop)
+        audioRef.current.removeEventListener('pause', onStop)
       }
       cleanup();
     };
-  }, [audioUrl]);
+  }, [audioUrl, actions, currentAnimation, animation, names]);
 
   // 4. Blinking
   const [blink, setBlink] = useState(false)
@@ -359,7 +397,9 @@ export function Ziva({ audioUrl, expression, expressionTrigger, animation, anima
     const currentViseme = lipsync.viseme 
 
     // C. Expressions
-    const expressionValues = isAudioPlaying ? {} : (facialExpressions[activeExpression] || {})
+    // Apply expressions even while speaking so the tone shows on the face.
+    // Visemes will still drive mouth shapes; we attenuate mouth/jaw expression a bit while speaking.
+    const expressionValues = (facialExpressions[activeExpression] || {})
 
     // D. Morph Targets
     Object.keys(head.morphTargetDictionary || {}).forEach((key) => {
@@ -369,8 +409,14 @@ export function Ziva({ audioUrl, expression, expressionTrigger, animation, anima
       let targetValue = 0
 
       // Base Expression
-      if (expressionValues[key]) {
-        targetValue = expressionValues[key]!
+      if (expressionValues[key] !== undefined) {
+        const raw = expressionValues[key]!
+        const shouldAttenuateForSpeech = isAudioPlaying && (
+          key.startsWith('mouth') ||
+          key.startsWith('jaw') ||
+          key.startsWith('tongue')
+        )
+        targetValue = shouldAttenuateForSpeech ? (raw * SPEAKING_MOUTH_EXPRESSION_ATTENUATION) : raw
       }
 
       // Blinking

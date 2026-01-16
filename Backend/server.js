@@ -289,11 +289,27 @@ const chatSessions = new Map();
 
 // ElevenLabs config removed. Using local TTS/STT.
 
-// VALID ACTIONS (Must match your Ziva.tsx)
+// VALID ACTIONS (Must match your frontend avatar catalog)
 const VALID_EXPRESSIONS = ['default', 'smile', 'sad', 'surprised', 'angry', 'crazy'];
 const VALID_ANIMATIONS = ['Angry', 'Arguing', 'BlowKiss', 'Clapping', 'Excited', 'GangamStyleDance', 'Greeting', 'Happy', 'Idle', 'LookAround', 'No', 'SalsaDance', 'SambaDance', 'Talking', 'Thankful', 'Thinking', 'ThoughtfulHeadNod', 'ThoughtfulHeadShake']; 
 
-const SYSTEM_INSTRUCTION = `
+function _normalizeStringList(v) {
+    if (!Array.isArray(v)) return [];
+    return v
+        .map((x) => (x === null || x === undefined) ? '' : String(x))
+        .map((s) => s.trim())
+        .filter(Boolean);
+}
+
+function _intersectAllowed(allowed, requested) {
+    if (!requested || requested.length === 0) return allowed;
+    const set = new Set(requested);
+    const out = allowed.filter((x) => set.has(x));
+    return out.length ? out : allowed;
+}
+
+function buildSystemInstruction(expressions = VALID_EXPRESSIONS, animations = VALID_ANIMATIONS) {
+    return `
 You are Ziva, a young woman having a chill, natural conversation with someone. You're relaxed, friendly, and just hanging out talking.
 
 Core vibe:
@@ -340,18 +356,40 @@ When conversation feels stuck or they're giving short replies, naturally bring u
 
 Remember: You're just hanging out and chatting. Keep it chill, keep it real, don't overthink it. Some responses can just be vibing and reacting. Not everything needs a question mark.
 
-Facial expressions: ${VALID_EXPRESSIONS.join(', ')}
-Use them naturally - smile for happy stuff, default for casual chat, etc.
+Facial expressions: ${expressions.join(', ')}
+You MUST choose exactly one facialExpression from the list above.
+If unsure: use "default".
+Tone guidance:
+- Positive/encouraging: smile
+- Sad/bad news: sad
+- Surprise/shock: surprised
+- Angry/annoyed: angry
+- Silly/chaotic joke: crazy
 
-Animations: ${VALID_ANIMATIONS.join(', ')}
-Match the mood - Talking for most stuff, Happy/Excited when hyped, Idle for chill moments, dances when being fun/playful.
+Animations: ${animations.join(', ')}
+You MUST choose exactly one animation from the list above.
+If unsure: use "Talking".
+Tone guidance:
+- Most normal replies: Talking
+- While pondering: Thinking or ThoughtfulHeadNod
+- Calm/neutral: Idle or LookAround
+- Playful/hyped: Happy or Excited
+- Dances: rare and only when the text is explicitly playful.
 `;
+}
 
 // Helper: Process Chat with Gemini
-async function processWithGemini(userMessage, sessionId = 'default', trace = null) {
+async function processWithGemini(userMessage, sessionId = 'default', trace = null, options = {}) {
     const t = trace ? { ...trace, sessionId: trace.sessionId || sessionId } : { reqId: _makeReqId('gemini'), sessionId };
     const startedAt = performance.now();
     let lastError;
+
+    const requestedExpressions = _normalizeStringList(options.availableExpressions);
+    const requestedAnimations = _normalizeStringList(options.availableAnimations);
+    const expressions = _intersectAllowed(VALID_EXPRESSIONS, requestedExpressions);
+    const animations = _intersectAllowed(VALID_ANIMATIONS, requestedAnimations);
+    const SYSTEM_INSTRUCTION = buildSystemInstruction(expressions, animations);
+
     // Get or create chat history for this session
     if (!chatSessions.has(sessionId)) {
         chatSessions.set(sessionId, []);
@@ -383,6 +421,14 @@ async function processWithGemini(userMessage, sessionId = 'default', trace = nul
 
             const result = await chat.sendMessage(userMessage);
             const response = JSON.parse(result.response.text());
+
+            // Clamp model output to known values so the frontend never receives invalid actions.
+            response.facialExpression = VALID_EXPRESSIONS.includes(response?.facialExpression)
+                ? response.facialExpression
+                : 'default';
+            response.animation = VALID_ANIMATIONS.includes(response?.animation)
+                ? response.animation
+                : 'Talking';
 
             logEvent(t, 'gemini-received', 'Gemini response received', {
                 model: candidate,
@@ -520,13 +566,16 @@ app.post('/chat', async (req, res) => {
     const trace = { reqId: _makeReqId('chat'), sessionId };
     const startedAt = performance.now();
     try {
-        const { message, piperVoice, piperStyle, piperSpeakerId } = req.body;
+        const { message, piperVoice, piperStyle, piperSpeakerId, availableFacialExpressions, availableAnimations } = req.body;
         logEvent(trace, 'chat-received', 'Chat received', {
             textLen: (message || '').length,
             preview: _truncate(message || ''),
         });
         
-        const aiResponse = await processWithGemini(message, sessionId, trace);
+        const aiResponse = await processWithGemini(message, sessionId, trace, {
+            availableExpressions: availableFacialExpressions,
+            availableAnimations,
+        });
         logEvent(trace, 'chat-gemini-done', 'Gemini processing complete', {
             durMs: Math.round((performance.now() - startedAt) * 10) / 10,
         });
@@ -664,7 +713,23 @@ app.post('/talk', upload.single('audio'), async (req, res) => {
             textLen: (userText || '').length,
             transcriptPreview: _truncate(userText || ''),
         });
-        const aiResponse = await processWithGemini(userText, sessionId, trace);
+        let reqAvailableExpressions = null;
+        let reqAvailableAnimations = null;
+        try {
+            if (req.body && req.body.availableFacialExpressions) {
+                reqAvailableExpressions = JSON.parse(String(req.body.availableFacialExpressions));
+            }
+        } catch { }
+        try {
+            if (req.body && req.body.availableAnimations) {
+                reqAvailableAnimations = JSON.parse(String(req.body.availableAnimations));
+            }
+        } catch { }
+
+        const aiResponse = await processWithGemini(userText, sessionId, trace, {
+            availableExpressions: reqAvailableExpressions,
+            availableAnimations: reqAvailableAnimations,
+        });
         const usedPiperVoice = (req.body && req.body.piperVoice) || DEFAULT_PIPER_VOICE;
         const usedPiperStyle = (req.body && req.body.piperStyle) || DEFAULT_PIPER_STYLE;
         if (aiResponse.exhausted) {

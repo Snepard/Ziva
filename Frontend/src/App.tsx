@@ -45,6 +45,7 @@ function App() {
   const [expressionTrigger, setExpressionTrigger] = useState(0);
   const [animation, setAnimation] = useState("Idle");
   const [animationTrigger, setAnimationTrigger] = useState(0);
+  const [pipelineStage, setPipelineStage] = useState<string>('');
   
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -85,8 +86,10 @@ function App() {
         const payload = JSON.parse(ev.data);
         const prefix = `[${payload.reqId}] [session:${payload.sessionId}] [${payload.stage}]`;
 
-        // Map backend stages to UX toasts
         const stage = String(payload.stage || '');
+        if (stage) setPipelineStage(stage);
+
+        // Map backend stages to UX toasts
         const toastId = payload?.reqId ? `${payload.reqId}:${stage}` : undefined;
         const quickPromise = new Promise<void>((resolve) => window.setTimeout(resolve, 350));
 
@@ -154,6 +157,57 @@ function App() {
     };
   }, [sessionId]);
 
+  // Smooth avatar animations while processing (fallback loop)
+  useEffect(() => {
+    if (!loading) return;
+
+    // Cycle through a few "processing" animations so Ziva feels alive.
+    const processingAnims: Array<(typeof ANIMATIONS)[number]> = [
+      'Thinking',
+      'LookAround',
+      'ThoughtfulHeadNod',
+    ];
+
+    let i = 0;
+    const tick = () => {
+      // If a specific pipeline stage is driving animation (handled below), don't fight it.
+      if (pipelineStage) return;
+      setAnimation(processingAnims[i % processingAnims.length]);
+      setAnimationTrigger((prev) => prev + 1);
+      i++;
+    };
+
+    // Start immediately, then loop.
+    tick();
+    const timer = window.setInterval(tick, 2600);
+    return () => window.clearInterval(timer);
+  }, [loading, pipelineStage]);
+
+  // Pipeline stage -> animation mapping (more "appropriate" transitions)
+  useEffect(() => {
+    if (!loading) return;
+    if (!pipelineStage) return;
+
+    const stageToAnim: Record<string, (typeof ANIMATIONS)[number]> = {
+      'audio-received': 'LookAround',
+      'stt-convert-start': 'LookAround',
+      'stt-start': 'LookAround',
+      'stt-complete': 'Thinking',
+      'gemini-request': 'Thinking',
+      'gemini-send': 'Thinking',
+      'gemini-received': 'ThoughtfulHeadNod',
+      'tts-requested': 'Talking',
+      'tts-start': 'Talking',
+      'tts-complete': 'Talking',
+    };
+
+    const next = stageToAnim[pipelineStage];
+    if (!next) return;
+
+    setAnimation(next);
+    setAnimationTrigger((prev) => prev + 1);
+  }, [loading, pipelineStage]);
+
   // ... (Keep your handleSend, startRecording, stopRecording, sendAudio functions exactly as they were) ...
   const handleSend = async (text: string) => {
     if (!text) return;
@@ -166,6 +220,9 @@ function App() {
     // Set thinking animation
     setAnimation("Thinking");
     setAnimationTrigger(prev => prev + 1);
+
+    // Clear any previous stage so the fallback loop can run until we get new SSE events.
+    setPipelineStage('');
     
     setLoading(true);
     setChatHistory(prev => [...prev, `You: ${messageToSend}`]);
@@ -178,7 +235,9 @@ function App() {
           message: messageToSend,
           voiceId: VOICE_ID,
           ttsModel: TTS_MODEL,
-          sessionId: sessionId
+          sessionId: sessionId,
+          availableFacialExpressions: FACIAL_EXPRESSIONS,
+          availableAnimations: ANIMATIONS,
         }),
       });
       if (res.status === 401) {
@@ -199,6 +258,10 @@ function App() {
 
   const startRecording = async () => {
     try {
+      // "Listening" vibe while recording
+      setAnimation('LookAround');
+      setAnimationTrigger((prev) => prev + 1);
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
@@ -226,6 +289,8 @@ function App() {
     // Set thinking animation
     setAnimation("Thinking");
     setAnimationTrigger(prev => prev + 1);
+
+    setPipelineStage('');
     
     setLoading(true);
     const formData = new FormData();
@@ -233,6 +298,8 @@ function App() {
     if (VOICE_ID) formData.append('voiceId', VOICE_ID);
     if (TTS_MODEL) formData.append('ttsModel', TTS_MODEL);
     formData.append('sessionId', sessionId);
+    formData.append('availableFacialExpressions', JSON.stringify(FACIAL_EXPRESSIONS));
+    formData.append('availableAnimations', JSON.stringify(ANIMATIONS));
 
     try {
       const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/talk`, {
@@ -267,6 +334,7 @@ function App() {
     setAudioUrl(data.audio);
     if(data.facialExpression) {
       setExpression(data.facialExpression);
+      setExpressionTrigger(prev => prev + 1);
     }
     if(data.animation) {
       setAnimation(data.animation);
