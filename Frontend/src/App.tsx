@@ -50,6 +50,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const didAutoIntroRef = useRef(false);
 
   const playIntro = async () => {
     // Small "hello" animation for first load + manual testing.
@@ -69,6 +70,9 @@ function App() {
   };
 
   useEffect(() => {
+    // React 18 StrictMode runs effects twice in dev; guard so intro only triggers once.
+    if (didAutoIntroRef.current) return;
+    didAutoIntroRef.current = true;
     void playIntro();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

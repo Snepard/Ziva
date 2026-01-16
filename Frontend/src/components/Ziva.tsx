@@ -159,6 +159,8 @@ export function Ziva({ audioUrl, expression, expressionTrigger, animation, anima
   const expressionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wasAudioPlayingRef = useRef(false)
   const preAudioAnimationRef = useRef<string | null>(null)
+  const currentAnimationRef = useRef(currentAnimation)
+  const desiredAnimationRef = useRef<string>('Idle')
 
   // Handle expression changes with auto-reset to default after 2 seconds
   useEffect(() => {
@@ -211,6 +213,14 @@ export function Ziva({ audioUrl, expression, expressionTrigger, animation, anima
   }, [animation, names, animationTrigger]) // Added animationTrigger to dependencies
 
   useEffect(() => {
+    currentAnimationRef.current = currentAnimation
+  }, [currentAnimation])
+
+  useEffect(() => {
+    desiredAnimationRef.current = (animation && names.includes(animation)) ? animation : 'Idle'
+  }, [animation, names])
+
+  useEffect(() => {
     if (!currentAnimation || !actions[currentAnimation]) return
     
     const action = actions[currentAnimation]
@@ -229,9 +239,9 @@ export function Ziva({ audioUrl, expression, expressionTrigger, animation, anima
     
     // Set loop mode - Idle and Talking should loop, others play once
     if (currentAnimation === 'Idle' || currentAnimation === 'Talking') {
-      action.setLoop(2201, Infinity) // LoopRepeat
+      action.setLoop(THREE.LoopRepeat, Infinity)
     } else {
-      action.setLoop(2200, 1) // LoopOnce
+      action.setLoop(THREE.LoopOnce, 1)
       action.clampWhenFinished = true
       // @ts-ignore - mixer property exists at runtime
       const mixer = action.getMixer()
@@ -250,6 +260,7 @@ export function Ziva({ audioUrl, expression, expressionTrigger, animation, anima
   const lipsyncRef = useRef<Lipsync>(new Lipsync())
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const lipsyncConnectedRef = useRef(false)
+  const autoplayRetryArmedRef = useRef(false)
 
   // useEffect(() => {
   //   if (!audioRef.current) {
@@ -273,38 +284,38 @@ export function Ziva({ audioUrl, expression, expressionTrigger, animation, anima
   useEffect(() => {
     // Cleanup function to fully reset audio and lipsync
     const cleanup = () => {
+      autoplayRetryArmedRef.current = false
       if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.removeAttribute('src');
-        audioRef.current.load();
-        audioRef.current = null;
+        audioRef.current.pause()
+        audioRef.current.removeAttribute('src')
+        audioRef.current.load()
+        audioRef.current = null
       }
-      if (lipsyncRef.current) {
-        // wawa-lipsync does not have a disconnect, but we can deref
-        lipsyncRef.current = null as any;
-      }
-      lipsyncConnectedRef.current = false;
-    };
+      // wawa-lipsync does not have a disconnect, but we can deref
+      lipsyncRef.current = null as any
+      lipsyncConnectedRef.current = false
+    }
 
     if (!audioUrl) {
-      cleanup();
-      return;
+      cleanup()
+      return
     }
 
     // Always create new instances for each audioUrl
-    lipsyncRef.current = new Lipsync();
-    lipsyncConnectedRef.current = false;
-    audioRef.current = new Audio();
-    audioRef.current.crossOrigin = 'anonymous';
-    audioRef.current.src = audioUrl;
+    lipsyncRef.current = new Lipsync()
+    lipsyncConnectedRef.current = false
+    const audio = new Audio()
+    audio.crossOrigin = 'anonymous'
+    audio.loop = false
+    audio.src = audioUrl
+    audioRef.current = audio
 
     // Drive Talking animation while audio is playing.
     const onPlay = () => {
       wasAudioPlayingRef.current = true
       if (actions['Talking']) {
-        // Only snapshot if we're not already in Talking.
-        if (currentAnimation !== 'Talking') {
-          preAudioAnimationRef.current = currentAnimation
+        if (currentAnimationRef.current !== 'Talking') {
+          preAudioAnimationRef.current = currentAnimationRef.current
         }
         setCurrentAnimation('Talking')
       }
@@ -315,7 +326,7 @@ export function Ziva({ audioUrl, expression, expressionTrigger, animation, anima
       wasAudioPlayingRef.current = false
 
       // Restore the requested animation from props (or Idle) after speaking.
-      const desired = (animation && names.includes(animation)) ? animation : 'Idle'
+      const desired = desiredAnimationRef.current
       if (desired !== 'Talking') {
         setCurrentAnimation(desired)
       } else if (preAudioAnimationRef.current && preAudioAnimationRef.current !== 'Talking') {
@@ -326,36 +337,52 @@ export function Ziva({ audioUrl, expression, expressionTrigger, animation, anima
       preAudioAnimationRef.current = null
     }
 
-    audioRef.current.addEventListener('play', onPlay)
-    audioRef.current.addEventListener('ended', onStop)
-    audioRef.current.addEventListener('pause', onStop)
+    audio.addEventListener('play', onPlay)
+    audio.addEventListener('ended', onStop)
+    audio.addEventListener('pause', onStop)
+
+    const tryPlay = async () => {
+      if (!audioRef.current) return
+      try {
+        if (!lipsyncConnectedRef.current && lipsyncRef.current) {
+          lipsyncRef.current.connectAudio(audioRef.current)
+          lipsyncConnectedRef.current = true
+        }
+        await audioRef.current.play()
+      } catch (e) {
+        // Autoplay is often blocked until first user gesture.
+        if (!autoplayRetryArmedRef.current) {
+          autoplayRetryArmedRef.current = true
+          const retryOnce = () => {
+            window.removeEventListener('pointerdown', retryOnce)
+            autoplayRetryArmedRef.current = false
+            void tryPlay()
+          }
+          window.addEventListener('pointerdown', retryOnce, { once: true })
+        }
+        console.warn('Audio autoplay blocked; will retry on user gesture.', e)
+      }
+    }
 
     // Wait for audio to be ready, then connect lipsync and play
-    const handleCanPlay = async () => {
-      try {
-        if (audioRef.current && !lipsyncConnectedRef.current && lipsyncRef.current) {
-          lipsyncRef.current.connectAudio(audioRef.current);
-          lipsyncConnectedRef.current = true;
-          await audioRef.current.play();
-        }
-      } catch (e) {
-        console.error('Error playing audio:', e);
-      }
-    };
+    const handleCanPlay = () => {
+      void tryPlay()
+    }
 
-    audioRef.current.addEventListener('canplay', handleCanPlay, { once: true });
-    audioRef.current.load();
+    audio.addEventListener('canplay', handleCanPlay, { once: true })
+    audio.load()
 
     return () => {
-      if (audioRef.current) {
-        audioRef.current.removeEventListener('canplay', handleCanPlay);
-        audioRef.current.removeEventListener('play', onPlay)
-        audioRef.current.removeEventListener('ended', onStop)
-        audioRef.current.removeEventListener('pause', onStop)
-      }
-      cleanup();
-    };
-  }, [audioUrl, actions, currentAnimation, animation, names]);
+      audio.removeEventListener('canplay', handleCanPlay)
+      audio.removeEventListener('play', onPlay)
+      audio.removeEventListener('ended', onStop)
+      audio.removeEventListener('pause', onStop)
+      cleanup()
+    }
+    // Intentionally depend only on audioUrl.
+    // Including currentAnimation/animation/actions in deps causes the audio object to be recreated and replayed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioUrl])
 
   // 4. Blinking
   const [blink, setBlink] = useState(false)
