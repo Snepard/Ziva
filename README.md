@@ -102,6 +102,27 @@ At a high level:
 5. Python synthesizes voice with Piper.
 6. Frontend plays audio and animates the 3D avatar.
 
+### Lip sync (wawa-lipsync)
+
+Lip sync happens entirely on the **frontend**, driven by the **same audio** that you hear.
+
+Flow:
+
+1. Backend returns `audio` as a base64 **WAV data URL**.
+2. Frontend passes that URL into the avatar component as `audioUrl`.
+3. The avatar creates an `HTMLAudioElement`, waits for `canplay`, then connects wawa-lipsync:
+  - `lipsync.connectAudio(audio)`
+  - `audio.play()` (with an autoplay retry on first user gesture if the browser blocks it)
+4. On every render frame, while audio is playing:
+  - `lipsync.processAudio()` analyzes the current audio window (wawa-lipsync uses WebAudio under the hood)
+  - `lipsync.viseme` exposes the current viseme key (examples: `viseme_aa`, `viseme_sil`)
+5. The avatar model is expected to have **blendshapes/morph targets named `viseme_*`**. The render loop:
+  - sets the currently active `viseme_*` morph target to a configured intensity
+  - lerps all viseme targets smoothly for natural mouth motion
+6. Facial expressions still apply while speaking, but mouth/jaw/tongue-related expression channels are attenuated while audio is playing to avoid fighting the visemes.
+
+Implementation lives in `Frontend/src/components/Ziva.tsx`.
+
 ---
 
 ## Repository Structure
