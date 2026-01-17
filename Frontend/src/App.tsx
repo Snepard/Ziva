@@ -52,6 +52,11 @@ function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const didAutoIntroRef = useRef(false);
 
+  // Mobile UX: allow collapsing the chat overlay so the model stays visible.
+  const [isMobile, setIsMobile] = useState(false);
+  const [isChatHiddenMobile, setIsChatHiddenMobile] = useState(false);
+  const didUserToggleChatRef = useRef(false);
+
   const playIntro = async () => {
     // Small "hello" animation for first load + manual testing.
     setExpression('smile');
@@ -75,6 +80,28 @@ function App() {
     didAutoIntroRef.current = true;
     void playIntro();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const mql = window.matchMedia('(max-width: 639px)'); // Tailwind sm breakpoint is 640px
+    const update = () => {
+      const mobileNow = mql.matches;
+      setIsMobile(mobileNow);
+      // Default to hidden on mobile (unless user explicitly toggled).
+      if (mobileNow && !didUserToggleChatRef.current) setIsChatHiddenMobile(true);
+      if (!mobileNow) setIsChatHiddenMobile(false);
+    };
+
+    update();
+    // Safari compatibility: use addListener/removeListener when needed.
+    if ('addEventListener' in mql) {
+      mql.addEventListener('change', update);
+      return () => mql.removeEventListener('change', update);
+    }
+    // @ts-ignore
+    mql.addListener(update);
+    // @ts-ignore
+    return () => mql.removeListener(update);
   }, []);
 
   // Stream backend pipeline logs live to the browser console
@@ -373,19 +400,67 @@ function App() {
       </div>
 
       {/* Chat Overlay */}
-      <div className="fixed bottom-6 left-6 z-10 w-[420px]">
-        <div className="bg-linear-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-2xl rounded-2xl border border-slate-700/50 shadow-2xl overflow-hidden">
-          {/* Header */}
-          <div className="bg-linear-to-r from-blue-600 to-purple-600 px-5 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-2.5 h-2.5 bg-green-400 rounded-full animate-pulse"></div>
-              <span className="text-white font-semibold text-sm">Ziva</span>
-            </div>
-            <div className="text-white/70 text-xs">Online</div>
-          </div>
+      {isMobile && isChatHiddenMobile ? (
+        <div className="fixed bottom-4 left-4 z-10 flex items-center gap-2">
+          <button
+            onClick={() => {
+              if (recording) {
+                stopRecording();
+              } else {
+                startRecording();
+              }
+            }}
+            className={`px-4 py-3 rounded-xl transition-all font-medium ${
+              recording
+                ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse shadow-lg shadow-red-500/50'
+                : 'bg-slate-800/80 hover:bg-slate-700/80 text-white'
+            } border border-slate-700/60 backdrop-blur-xl`}
+            disabled={loading}
+            title={recording ? 'Stop recording' : 'Start recording'}
+            type="button"
+          >
+            {recording ? '⏹' : '🎤'}
+          </button>
 
-          {/* Avatar test dropdown */}
-          <div className="px-4 py-3 border-b border-slate-700/40 bg-slate-900/40">
+          <button
+            onClick={() => {
+              didUserToggleChatRef.current = true;
+              setIsChatHiddenMobile(false);
+            }}
+            className="px-4 py-3 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-white border border-slate-700/60 backdrop-blur-xl"
+            type="button"
+          >
+            Chat
+          </button>
+        </div>
+      ) : (
+        <div className="fixed bottom-4 left-4 right-4 z-10 w-auto sm:bottom-6 sm:left-6 sm:right-auto sm:w-[420px]">
+          <div className="bg-linear-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-2xl rounded-2xl border border-slate-700/50 shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="bg-linear-to-r from-blue-600 to-purple-600 px-4 py-2 flex items-center justify-between sm:px-5 sm:py-2.5">
+              <div className="flex items-center gap-3">
+                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse sm:w-2.5 sm:h-2.5"></div>
+                <span className="text-white font-semibold text-xs sm:text-sm">Ziva</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="text-white/70 text-[10px] sm:text-xs">Online</div>
+                <button
+                  onClick={() => {
+                    didUserToggleChatRef.current = true;
+                    setIsChatHiddenMobile(true);
+                  }}
+                  className="sm:hidden w-7 h-7 grid place-items-center rounded-lg bg-white/15 hover:bg-white/20 text-white"
+                  type="button"
+                  aria-label="Hide chat"
+                  title="Hide chat"
+                >
+                  ▾
+                </button>
+              </div>
+            </div>
+
+          {/* Avatar test dropdown (hide on mobile to keep model visible) */}
+          <div className="hidden sm:block px-4 py-3 border-b border-slate-700/40 bg-slate-900/40">
             <details className="select-none">
               <summary className="cursor-pointer text-xs text-slate-200/90 font-medium">Avatar tester (expressions / animations)</summary>
               <div className="mt-3 grid grid-cols-2 gap-2">
@@ -456,7 +531,7 @@ function App() {
           </div>
 
           {/* Chat History */}
-          <div className="h-80 overflow-y-auto p-4 space-y-3 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent">
+          <div className="h-[22vh] sm:h-64 overflow-y-auto p-3 sm:p-4 space-y-3 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent">
             {chatHistory.map((msg, i) => {
               const isUser = msg.startsWith("You");
               const cleanMsg = msg.replace(/^(You:|You \(Voice\):|Ziva:)\s*/, '');
@@ -468,7 +543,7 @@ function App() {
                       ? 'bg-linear-to-r from-blue-500 to-blue-600 text-white rounded-br-md' 
                       : 'bg-slate-700/80 text-slate-100 rounded-bl-md'
                   } shadow-lg`}>
-                    <p className="text-sm leading-relaxed">{cleanMsg}</p>
+                    <p className="text-xs sm:text-sm leading-relaxed">{cleanMsg}</p>
                   </div>
                 </div>
               );
@@ -487,10 +562,10 @@ function App() {
           </div>
 
           {/* Input Area */}
-          <div className="p-4 bg-slate-800/50 border-t border-slate-700/50">
+          <div className="p-3 sm:p-4 bg-slate-800/50 border-t border-slate-700/50">
             <div className="flex gap-2">
               <input 
-                className="flex-1 bg-slate-700/50 text-white placeholder-slate-400 px-4 py-3 rounded-xl border border-slate-600/50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                className="flex-1 bg-slate-700/50 text-white placeholder-slate-400 px-3 sm:px-4 py-3 rounded-xl border border-slate-600/50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                 value={input}
                 onChange={(e) => {
                   const v = e.target.value;
@@ -509,7 +584,7 @@ function App() {
                     startRecording();
                   }
                 }}
-                className={`px-4 py-3 rounded-xl transition-all font-medium ${
+                className={`px-3 sm:px-4 py-3 rounded-xl transition-all font-medium ${
                   recording
                     ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse shadow-lg shadow-red-500/50'
                     : 'bg-slate-700 hover:bg-slate-600 text-white'
@@ -522,18 +597,19 @@ function App() {
 
               <button 
                 onClick={() => handleSend(input)}
-                className="bg-linear-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white px-5 py-3 rounded-xl transition-all font-medium shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                className="bg-linear-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white px-4 sm:px-5 py-3 rounded-xl transition-all font-medium shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={loading || recording || !input.trim()}
               >
                 Send
               </button>
             </div>
             <div className="text-xs text-slate-400 mt-2 text-center">
-              Hold 🎤 to speak • Press Enter to send
+              Click 🎤 to speak • Press Enter to send
             </div>
           </div>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 3D Scene */}
       <Canvas 

@@ -1,4 +1,5 @@
 import { Environment, OrbitControls, Sparkles, ContactShadows } from "@react-three/drei";
+import { useThree } from "@react-three/fiber";
 import { Ziva } from "./Ziva";
 
 interface ExperienceProps {
@@ -10,6 +11,10 @@ interface ExperienceProps {
 }
 
 export const Experience = ({ audioUrl, expression, expressionTrigger, animation, animationTrigger }: ExperienceProps) => {
+    const { size } = useThree();
+    // Tailwind "sm" breakpoint is 640px; match that for layout decisions.
+    const isMobile = size.width < 640;
+
     return (
         <>
             {/* 1. Controls */}
@@ -43,7 +48,7 @@ export const Experience = ({ audioUrl, expression, expressionTrigger, animation,
 
             {/* 5. The Avatar */}
             {/* Shift X to the right for equal spacing between chat and right edge. Adjust 0.4 as needed. */}
-            <group position={[0.4, -1.3, 0]} scale={1.3}>
+            <group position={[isMobile ? 0 : 0.4, -1.3, 0]} scale={1.3}>
                 <Ziva
                     audioUrl={audioUrl}
                     expression={expression}
