@@ -2,6 +2,7 @@ import { Canvas } from "@react-three/fiber";
 import { Suspense, useEffect, useState, useRef } from "react";
 import { Experience } from "./components/Experience";
 import { Toaster, toast } from "react-hot-toast";
+import { MessageCircle } from "lucide-react";
 
 const FACIAL_EXPRESSIONS = ['default', 'smile', 'sad', 'surprised', 'angry', 'crazy'] as const;
 const ANIMATIONS = [
@@ -401,36 +402,18 @@ function App() {
 
       {/* Chat Overlay */}
       {isMobile && isChatHiddenMobile ? (
-        <div className="fixed bottom-4 left-4 z-10 flex items-center gap-2">
-          <button
-            onClick={() => {
-              if (recording) {
-                stopRecording();
-              } else {
-                startRecording();
-              }
-            }}
-            className={`px-4 py-3 rounded-xl transition-all font-medium ${
-              recording
-                ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse shadow-lg shadow-red-500/50'
-                : 'bg-slate-800/80 hover:bg-slate-700/80 text-white'
-            } border border-slate-700/60 backdrop-blur-xl`}
-            disabled={loading}
-            title={recording ? 'Stop recording' : 'Start recording'}
-            type="button"
-          >
-            {recording ? '⏹' : '🎤'}
-          </button>
-
+        <div className="fixed bottom-4 left-4 z-10">
           <button
             onClick={() => {
               didUserToggleChatRef.current = true;
               setIsChatHiddenMobile(false);
             }}
-            className="px-4 py-3 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-white border border-slate-700/60 backdrop-blur-xl"
+            className="w-12 h-12 grid place-items-center rounded-xl bg-linear-to-br from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white border border-white/15 shadow-lg shadow-purple-500/25 backdrop-blur-xl"
             type="button"
+            aria-label="Open chat"
+            title="Open chat"
           >
-            Chat
+            <MessageCircle size={20} />
           </button>
         </div>
       ) : (
